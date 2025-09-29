@@ -1,24 +1,24 @@
-// chatLimitManager.js
-// Manages chat limits for users with 5-hour reset using Firebase Realtime Database
+// messageLimitManager.js
+// Manages message limits for users with 5-hour reset using Firebase Realtime Database
 
 import { ref, get, set, update } from 'firebase/database';
 import { database } from '../../firebase/firebase';
 
-const CHAT_LIMIT = 5;
+const MESSAGE_LIMIT = 5;
 const RESET_HOURS = 5; // Reset after 5 hours
 
 /**
- * Get chat limit data for a user from Firebase Realtime Database
+ * Get message limit data for a user from Firebase Realtime Database
  * @param {string} userId - The user's ID
- * @returns {Promise<Object>} - { count, resetTime, canCreate, remaining }
+ * @returns {Promise<Object>} - { count, resetTime, canSend, remaining }
  */
-export const getChatLimitData = async (userId) => {
+export const getMessageLimitData = async (userId) => {
   if (!userId) {
     throw new Error('User ID is required');
   }
 
   try {
-    const limitRef = ref(database, `chatLimits/${userId}`);
+    const limitRef = ref(database, `messageLimits/${userId}`);
     const snapshot = await get(limitRef);
     const data = snapshot.val() || {};
     
@@ -40,8 +40,8 @@ export const getChatLimitData = async (userId) => {
       return {
         count: 0,
         resetTime: newResetTime,
-        canCreate: true,
-        remaining: CHAT_LIMIT
+        canSend: true,
+        remaining: MESSAGE_LIMIT
       };
     }
     
@@ -50,17 +50,17 @@ export const getChatLimitData = async (userId) => {
     return {
       count,
       resetTime,
-      canCreate: count < CHAT_LIMIT,
-      remaining: Math.max(0, CHAT_LIMIT - count)
+      canSend: count < MESSAGE_LIMIT,
+      remaining: Math.max(0, MESSAGE_LIMIT - count)
     };
   } catch (error) {
-    console.error('Error getting chat limit data:', error);
-    // Fallback to allow creation if database fails
+    console.error('Error getting message limit data:', error);
+    // Fallback to allow sending if database fails
     return {
       count: 0,
       resetTime: getNextResetTime(),
-      canCreate: true,
-      remaining: CHAT_LIMIT,
+      canSend: true,
+      remaining: MESSAGE_LIMIT,
       error: true
     };
   }
@@ -77,23 +77,23 @@ const getNextResetTime = () => {
 };
 
 /**
- * Increment the chat count for a user in Firebase
+ * Increment the message count for a user in Firebase
  * @param {string} userId - The user's ID
  * @returns {Promise<Object>} - Updated limit data
  */
-export const incrementChatCount = async (userId) => {
+export const incrementMessageCount = async (userId) => {
   if (!userId) {
     throw new Error('User ID is required');
   }
 
   try {
-    const currentData = await getChatLimitData(userId);
+    const currentData = await getMessageLimitData(userId);
     
-    if (!currentData.canCreate) {
-      throw new Error('Chat limit reached');
+    if (!currentData.canSend) {
+      throw new Error('Message limit reached');
     }
     
-    const limitRef = ref(database, `chatLimits/${userId}`);
+    const limitRef = ref(database, `messageLimits/${userId}`);
     const newCount = currentData.count + 1;
     
     await update(limitRef, {
@@ -104,11 +104,11 @@ export const incrementChatCount = async (userId) => {
     return {
       count: newCount,
       resetTime: currentData.resetTime,
-      canCreate: newCount < CHAT_LIMIT,
-      remaining: Math.max(0, CHAT_LIMIT - newCount)
+      canSend: newCount < MESSAGE_LIMIT,
+      remaining: Math.max(0, MESSAGE_LIMIT - newCount)
     };
   } catch (error) {
-    console.error('Error incrementing chat count:', error);
+    console.error('Error incrementing message count:', error);
     throw error;
   }
 };
@@ -134,17 +134,17 @@ export const getTimeUntilReset = (resetTime) => {
 };
 
 /**
- * Reset chat count manually (for admin/testing)
+ * Reset message count manually (for admin/testing)
  * @param {string} userId - The user's ID
  * @returns {Promise<void>}
  */
-export const resetChatCount = async (userId) => {
+export const resetMessageCount = async (userId) => {
   if (!userId) {
     throw new Error('User ID is required');
   }
 
   try {
-    const limitRef = ref(database, `chatLimits/${userId}`);
+    const limitRef = ref(database, `messageLimits/${userId}`);
     const newResetTime = getNextResetTime();
     
     await set(limitRef, {
@@ -153,24 +153,24 @@ export const resetChatCount = async (userId) => {
       lastUpdated: new Date().toISOString()
     });
     
-    console.log('Chat count reset successfully');
+    console.log('Message count reset successfully');
   } catch (error) {
-    console.error('Error resetting chat count:', error);
+    console.error('Error resetting message count:', error);
     throw error;
   }
 };
 
 /**
- * Get chat limit statistics for all users (admin function)
- * @returns {Promise<Object>} - All users' chat limit data
+ * Get message limit statistics for all users (admin function)
+ * @returns {Promise<Object>} - All users' message limit data
  */
-export const getAllChatLimits = async () => {
+export const getAllMessageLimits = async () => {
   try {
-    const limitsRef = ref(database, 'chatLimits');
+    const limitsRef = ref(database, 'messageLimits');
     const snapshot = await get(limitsRef);
     return snapshot.val() || {};
   } catch (error) {
-    console.error('Error getting all chat limits:', error);
+    console.error('Error getting all message limits:', error);
     throw error;
   }
 };
@@ -180,22 +180,22 @@ export const getAllChatLimits = async () => {
  * @param {string} userId - The user's ID
  * @returns {Promise<void>}
  */
-export const debugChatLimit = async (userId) => {
+export const debugMessageLimit = async (userId) => {
   if (!userId) {
     console.error('❌ No userId provided');
     return;
   }
 
   try {
-    const limitRef = ref(database, `chatLimits/${userId}`);
+    const limitRef = ref(database, `messageLimits/${userId}`);
     const snapshot = await get(limitRef);
     const rawData = snapshot.val();
     
-    console.log('🔍 Debug Chat Limit for:', userId);
+    console.log('🔍 Debug Message Limit for:', userId);
     console.log('📊 Raw Database Data:', rawData);
     
     if (!rawData) {
-      console.log('✅ No limit data found - user can create new chats');
+      console.log('✅ No limit data found - user can send messages');
       return;
     }
 
@@ -207,13 +207,13 @@ export const debugChatLimit = async (userId) => {
     console.log('🔄 Reset Time:', rawData.resetTime);
     console.log('📈 Current Count:', rawData.count);
     console.log('🚦 Needs Reset:', needsReset);
-    console.log('✨ Can Create:', rawData.count < CHAT_LIMIT && !needsReset);
+    console.log('✨ Can Send:', rawData.count < MESSAGE_LIMIT && !needsReset);
     console.log('⏳ Time Until Reset:', getTimeUntilReset(resetTime));
 
     if (needsReset) {
       console.log('⚠️ This user\'s limit should auto-reset on next check');
     }
   } catch (error) {
-    console.error('❌ Error debugging chat limit:', error);
+    console.error('❌ Error debugging message limit:', error);
   }
 };

@@ -4,20 +4,20 @@ import { getTimeUntilReset } from './utils/ChatLimitManager';
 import DeleteChatHistory from './DeleteChatHistory';
 import DeleteSingleChat from './DeleteSingleChat';
 
-const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteChat, isOpen, chatLimitData }) => {
+const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteChat, isOpen, messageLimitData }) => {
   const { user, logout } = useAuth();
 
   const getLimitColor = () => {
-    if (!chatLimitData) return 'text-gray-400';
-    if (chatLimitData.remaining === 0) return 'text-red-400';
-    if (chatLimitData.remaining <= 2) return 'text-yellow-400';
+    if (!messageLimitData) return 'text-gray-400';
+    if (messageLimitData.remaining === 0) return 'text-red-400';
+    if (messageLimitData.remaining <= 2) return 'text-yellow-400';
     return 'text-green-400';
   };
 
   const getLimitBgColor = () => {
-    if (!chatLimitData) return 'bg-gray-800';
-    if (chatLimitData.remaining === 0) return 'bg-red-900/20 border-red-500/30';
-    if (chatLimitData.remaining <= 2) return 'bg-yellow-900/20 border-yellow-500/30';
+    if (!messageLimitData) return 'bg-gray-800';
+    if (messageLimitData.remaining === 0) return 'bg-red-900/20 border-red-500/30';
+    if (messageLimitData.remaining <= 2) return 'bg-yellow-900/20 border-yellow-500/30';
     return 'bg-green-900/20 border-green-500/30';
   };
 
@@ -55,39 +55,39 @@ const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteCh
             </div>
           </div>
 
-          {/* Chat Limit Display */}
-          {chatLimitData && (
+          {/* Message Limit Display */}
+          {messageLimitData && (
             <div className={`p-3 rounded-lg border ${getLimitBgColor()} mb-3`}>
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center space-x-2">
                   <Clock className={`w-4 h-4 ${getLimitColor()}`} />
                   <span className={`text-sm font-medium ${getLimitColor()}`}>
-                    Chat Limit
+                    Message Limit
                   </span>
                 </div>
                 <span className={`text-lg font-bold ${getLimitColor()}`}>
-                  {chatLimitData.remaining}/5
+                  {messageLimitData.remaining}/5
                 </span>
               </div>
               
-              {chatLimitData.remaining <= 2 && (
+              {messageLimitData.remaining <= 2 && (
                 <div className="flex items-start space-x-2 mt-2 pt-2 border-t border-gray-700">
                   <AlertCircle className={`w-4 h-4 ${getLimitColor()} flex-shrink-0 mt-0.5`} />
                   <div>
-                    {chatLimitData.remaining === 0 ? (
+                    {messageLimitData.remaining === 0 ? (
                       <p className="text-xs text-red-300">
                         Limit reached. Resets in{' '}
                         <span className="font-semibold">
-                          {getTimeUntilReset(new Date(chatLimitData.resetTime))}
+                          {getTimeUntilReset(new Date(messageLimitData.resetTime))}
                         </span>
                       </p>
                     ) : (
                       <p className="text-xs text-yellow-300">
-                        {chatLimitData.remaining} {chatLimitData.remaining === 1 ? 'chat' : 'chats'} remaining
+                        {messageLimitData.remaining} {messageLimitData.remaining === 1 ? 'message' : 'messages'} remaining
                         <br />
                         Resets in{' '}
                         <span className="font-semibold">
-                          {getTimeUntilReset(new Date(chatLimitData.resetTime))}
+                          {getTimeUntilReset(new Date(messageLimitData.resetTime))}
                         </span>
                       </p>
                     )}
@@ -95,31 +95,26 @@ const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteCh
                 </div>
               )}
 
-              {chatLimitData.remaining > 2 && (
+              {messageLimitData.remaining > 2 && (
                 <p className="text-xs text-gray-400 mt-1">
-                  Resets in {getTimeUntilReset(new Date(chatLimitData.resetTime))}
+                  Resets in {getTimeUntilReset(new Date(messageLimitData.resetTime))}
                 </p>
               )}
             </div>
           )}
 
-          {/* New Chat Button */}
+          {/* New Chat Button - Always enabled, limit is on messages not chats */}
           <button
             onClick={onNewChat}
-            disabled={chatLimitData && !chatLimitData.canCreate && !currentChatId}
-            className={`w-full flex items-center justify-center space-x-2 py-3 rounded-lg transition duration-200 ${
-              chatLimitData && !chatLimitData.canCreate && !currentChatId
-                ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                : 'bg-purple-600 hover:bg-purple-700 text-white'
-            }`}
+            className="w-full flex items-center justify-center space-x-2 py-3 rounded-lg transition duration-200 bg-purple-600 hover:bg-purple-700 text-white"
           >
             <Plus className="w-5 h-5" />
             <span className="font-medium">New Chat</span>
           </button>
 
-          {chatLimitData && !chatLimitData.canCreate && !currentChatId && (
-            <p className="text-xs text-red-400 mt-2 text-center">
-              Daily limit reached. Continue with existing chats.
+          {messageLimitData && !messageLimitData.canSend && (
+            <p className="text-xs text-yellow-400 mt-2 text-center">
+              You can create new chats, but can't send messages until reset.
             </p>
           )}
         </div>

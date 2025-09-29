@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { ref, get } from 'firebase/database';
 import { database } from './firebase/firebase';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { getChatLimitData } from './components/utils/ChatLimitManager';
+import { getMessageLimitData } from './components/utils/ChatLimitManager';
 import Login from './pages/Login';
 import Home from './pages/Home';
 import AdminDashboard from './pages/AdminDashboard';
@@ -46,7 +46,7 @@ function AppContent() {
 
     const updateChatLimit = async () => {
       try {
-        const limitData = await getChatLimitData(user.uid);
+       const limitData = await getMessageLimitData(user.uid);
         setChatLimitData(limitData);
       } catch (error) {
         console.error('Error fetching chat limit:', error);

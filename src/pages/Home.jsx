@@ -4,13 +4,31 @@ import { database } from '../firebase/firebase';
 import { useAuth } from '../context/AuthContext';
 import Sidebar from '../components/ChatSidebar';
 import ChatArea from './ChatArea';
+import { getMessageLimitData } from '../components/utils/ChatLimitManager';
 
-const Home = ({ chatLimitData, setChatLimitData }) => {
+const Home = () => {
   const { user } = useAuth();
   const [chats, setChats] = useState([]);
   const [currentChatId, setCurrentChatId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [messageLimitData, setMessageLimitData] = useState(null);
+
+  // Load message limit data on mount and when user changes
+  useEffect(() => {
+    const loadMessageLimit = async () => {
+      if (user?.uid) {
+        try {
+          const limitData = await getMessageLimitData(user.uid);
+          setMessageLimitData(limitData);
+        } catch (error) {
+          console.error('Error loading message limit:', error);
+        }
+      }
+    };
+
+    loadMessageLimit();
+  }, [user]);
 
   // Load user's chats from Firebase
   useEffect(() => {
@@ -151,7 +169,7 @@ const Home = ({ chatLimitData, setChatLimitData }) => {
         onNewChat={handleNewChat}
         onDeleteChat={handleDeleteChat}
         isOpen={sidebarOpen}
-        chatLimitData={chatLimitData}
+        messageLimitData={messageLimitData}
       />
       <ChatArea
         messages={messages}
@@ -161,8 +179,8 @@ const Home = ({ chatLimitData, setChatLimitData }) => {
         onSaveMessage={handleSaveMessage}
         onToggleSidebar={toggleSidebar}
         userId={user?.uid}
-        chatLimitData={chatLimitData}
-        setChatLimitData={setChatLimitData}
+        messageLimitData={messageLimitData}
+        setMessageLimitData={setMessageLimitData}
       />
     </div>
   );

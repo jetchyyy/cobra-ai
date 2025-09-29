@@ -1,9 +1,9 @@
-// ChatArea.jsx - Updated with chat limits from props
+// ChatArea.jsx - Updated with message limits
 import { useState, useRef, useEffect } from 'react';
 import { Send, Menu, Sparkles, Loader, FileText, AlertCircle } from 'lucide-react';
 import { model } from '../firebase/firebase';
 import FileUpload from '../components/FileUpload';
-import { getChatLimitData, incrementChatCount, getTimeUntilReset } from '../components/utils/ChatLimitManager';
+import { getMessageLimitData, incrementMessageCount, getTimeUntilReset } from '../components/utils/ChatLimitManager';
 
 const ChatArea = ({ 
   messages, 
@@ -13,8 +13,8 @@ const ChatArea = ({
   onSaveMessage, 
   onToggleSidebar, 
   userId,
-  chatLimitData,
-  setChatLimitData 
+  messageLimitData,
+  setMessageLimitData 
 }) => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -42,26 +42,26 @@ const ChatArea = ({
   const handleSendMessage = async () => {
     if ((!input.trim() && !uploadedFile) || isLoading) return;
 
+    // Check message limit BEFORE processing anything
+    if (userId) {
+      const currentLimit = await getMessageLimitData(userId);
+      if (!currentLimit.canSend) {
+        const resetTime = currentLimit.resetTime ? new Date(currentLimit.resetTime) : new Date();
+        const errorMessage = {
+          role: 'assistant',
+          content: `You've reached your limit of 5 messages. Your message limit will reset in ${getTimeUntilReset(resetTime)}. Please wait until then to continue chatting.`
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+        return;
+      }
+    }
+
     let userMessage = input.trim();
     const fileData = uploadedFile;
     
     // If there's a file, create a message that includes file context
     if (fileData) {
       userMessage = userMessage || "Please analyze this document and tell me what it's about.";
-    }
-
-    // Check chat limit BEFORE processing anything - only for new chats
-    if (!currentChatId && userId) {
-      const currentLimit = await getChatLimitData(userId);
-      if (!currentLimit.canCreate) {
-        const resetTime = currentLimit.resetTime ? new Date(currentLimit.resetTime) : new Date();
-        const errorMessage = {
-          role: 'assistant',
-          content: `You've reached your daily limit of 5 chats. You can continue with existing chats, but can't create new ones until the reset in ${getTimeUntilReset(resetTime)}.`
-        };
-        setMessages((prev) => [...prev, errorMessage]);
-        return;
-      }
     }
 
     setInput('');
@@ -82,17 +82,17 @@ const ChatArea = ({
       let chatId = currentChatId;
       if (!chatId) {
         chatId = await onCreateChat(userMessage);
-        
-        // Increment chat count after successful creation
-        if (chatId && userId) {
-          const newLimitData = await incrementChatCount(userId);
-          setChatLimitData(newLimitData);
-        }
       }
 
       // Save user message to Database
       if (chatId) {
         await onSaveMessage(chatId, 'user', userMessage);
+      }
+
+      // Increment message count after user sends a message
+      if (userId) {
+        const newLimitData = await incrementMessageCount(userId);
+        setMessageLimitData(newLimitData);
       }
 
       // Create prompt with file context if file exists
@@ -160,32 +160,46 @@ const ChatArea = ({
           <h2 className="text-white font-semibold">Cobra AI Assistant</h2>
         </div>
         
-        {/* Chat Limit Indicator - Mobile View */}
-        {chatLimitData && (
-          <div className="hidden md:flex items-center space-x-2">
-            <div className={`text-sm ${chatLimitData.canCreate ? 'text-gray-400' : 'text-red-400'}`}>
-              {chatLimitData.remaining} chats remaining
+        {/* Message Limit Indicator - Mobile View */}
+        {messageLimitData && (
+          <div className="flex items-center space-x-2">
+            <div className={`text-sm ${messageLimitData.canSend ? 'text-gray-400' : 'text-red-400'}`}>
+              {messageLimitData.remaining}/5 messages
             </div>
-            {!chatLimitData.canCreate && (
+            {!messageLimitData.canSend && (
               <div className="text-xs text-gray-500">
-                Resets in {getTimeUntilReset(new Date(chatLimitData.resetTime))}
+                Resets in {getTimeUntilReset(new Date(messageLimitData.resetTime))}
               </div>
             )}
           </div>
         )}
       </div>
 
-      {/* Chat Limit Warning Banner */}
-      {chatLimitData && !chatLimitData.canCreate && messages.length === 0 && (
-        <div className="bg-yellow-900/20 border-b border-yellow-500/30 p-4">
+      {/* Message Limit Warning Banner */}
+      {messageLimitData && messageLimitData.remaining <= 2 && messageLimitData.remaining > 0 && (
+        <div className="bg-yellow-900/20 border-b border-yellow-500/30 p-3">
           <div className="flex items-start space-x-3 max-w-4xl mx-auto">
             <AlertCircle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-yellow-300 text-sm font-medium">
-                Daily chat limit reached
+              <p className="text-yellow-300 text-sm">
+                {messageLimitData.remaining} {messageLimitData.remaining === 1 ? 'message' : 'messages'} remaining. 
+                Resets in {getTimeUntilReset(new Date(messageLimitData.resetTime))}
               </p>
-              <p className="text-yellow-400/80 text-xs mt-1">
-                You've used all 5 chats. You can continue with existing chats, but can't create new ones until the reset in {getTimeUntilReset(new Date(chatLimitData.resetTime))}.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {messageLimitData && !messageLimitData.canSend && (
+        <div className="bg-red-900/20 border-b border-red-500/30 p-3">
+          <div className="flex items-start space-x-3 max-w-4xl mx-auto">
+            <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-red-300 text-sm font-medium">
+                Message limit reached
+              </p>
+              <p className="text-red-400/80 text-xs mt-1">
+                You've used all 5 messages. Your limit will reset in {getTimeUntilReset(new Date(messageLimitData.resetTime))}.
               </p>
             </div>
           </div>
@@ -204,9 +218,9 @@ const ChatArea = ({
               <p className="text-gray-400 mb-2">
                 Your intelligent study assistant. Upload documents or ask me anything!
               </p>
-              {chatLimitData && (
+              {messageLimitData && (
                 <p className="text-purple-400 text-sm mb-6">
-                  {chatLimitData.remaining} of 5 chats remaining today
+                  {messageLimitData.remaining} of 5 messages remaining
                 </p>
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
@@ -306,7 +320,7 @@ const ChatArea = ({
                   ? 'bg-purple-600 text-white'
                   : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
               } rounded-lg px-4 py-3 transition duration-200 flex items-center justify-center`}
-              disabled={isLoading}
+              disabled={isLoading || (messageLimitData && !messageLimitData.canSend)}
             >
               <FileText className="w-5 h-5" />
             </button>
@@ -314,19 +328,36 @@ const ChatArea = ({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder={uploadedFile ? "Ask about the document..." : "Ask me anything about your studies..."}
-              className="flex-1 bg-gray-700 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+              placeholder={
+                messageLimitData && !messageLimitData.canSend 
+                  ? "Message limit reached. Please wait for reset..." 
+                  : uploadedFile 
+                    ? "Ask about the document..." 
+                    : "Ask me anything about your studies..."
+              }
+              className="flex-1 bg-gray-700 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none disabled:opacity-50 disabled:cursor-not-allowed"
               rows="1"
-              disabled={isLoading}
+              disabled={isLoading || (messageLimitData && !messageLimitData.canSend)}
             />
             <button
               onClick={handleSendMessage}
-              disabled={(!input.trim() && !uploadedFile) || isLoading}
+              disabled={(!input.trim() && !uploadedFile) || isLoading || (messageLimitData && !messageLimitData.canSend)}
               className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg px-6 py-3 transition duration-200 flex items-center justify-center"
             >
               <Send className="w-5 h-5" />
             </button>
           </div>
+
+          {/* Message limit indicator below input */}
+          {messageLimitData && (
+            <div className="text-center text-sm text-gray-400">
+              {messageLimitData.canSend ? (
+                <span>{messageLimitData.remaining} message{messageLimitData.remaining !== 1 ? 's' : ''} remaining</span>
+              ) : (
+                <span className="text-red-400">Limit reached • Resets in {getTimeUntilReset(new Date(messageLimitData.resetTime))}</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
