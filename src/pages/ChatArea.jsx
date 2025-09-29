@@ -1,4 +1,4 @@
-// ChatArea.jsx - Updated with message limits
+// ChatArea.jsx - Updated with message limits and conversation memory
 import { useState, useRef, useEffect } from 'react';
 import { Send, Menu, Sparkles, Loader, FileText, AlertCircle } from 'lucide-react';
 import { model } from '../firebase/firebase';
@@ -71,7 +71,8 @@ const ChatArea = ({
     const newUserMessage = { 
       role: 'user', 
       content: userMessage,
-      file: fileData ? { name: fileData.name, size: fileData.size } : null
+      file: fileData ? { name: fileData.name, size: fileData.size } : null,
+      fileContent: fileData ? fileData.content : null // Store file content for conversation history
     };
     setMessages((prev) => [...prev, newUserMessage]);
 
@@ -85,9 +86,10 @@ const ChatArea = ({
       }
 
       // Save user message to Database
-      if (chatId) {
-        await onSaveMessage(chatId, 'user', userMessage);
-      }
+     // Save user message to Database with file metadata
+if (chatId) {
+  await onSaveMessage(chatId, 'user', userMessage, fileData ? { name: fileData.name, size: fileData.size } : null);
+}
 
       // Increment message count after user sends a message
       if (userId) {
@@ -95,14 +97,40 @@ const ChatArea = ({
         setMessageLimitData(newLimitData);
       }
 
-      // Create prompt with file context if file exists
-      let prompt = userMessage;
-      if (fileData) {
-        prompt = `I have uploaded a document titled "${fileData.name}". Here is the content:\n\n${fileData.content}\n\nBased on this document, ${userMessage}`;
+      // Build conversation history for context
+      const conversationHistory = [];
+      
+      // Add all previous messages to history
+      for (const msg of messages) {
+        // If this message had a file attached, we need to include it in the content
+        let messageContent = msg.content;
+        if (msg.file && msg.fileContent) {
+          messageContent = `[Document: ${msg.file.name}]\n\n${msg.fileContent}\n\n${msg.content}`;
+        }
+        
+        conversationHistory.push({
+          role: msg.role === 'user' ? 'user' : 'model',
+          parts: [{ text: messageContent }]
+        });
       }
+      
+      // Add current user message with file context if exists
+      let currentPrompt = userMessage;
+      if (fileData) {
+        currentPrompt = `[Document: ${fileData.name}]\n\n${fileData.content}\n\n${userMessage}`;
+      }
+      
+      conversationHistory.push({
+        role: 'user',
+        parts: [{ text: currentPrompt }]
+      });
 
-      // Generate AI response (streaming)
-      const streamResult = await model.generateContentStream(prompt);
+      // Generate AI response with full conversation history (streaming)
+      const chat = model.startChat({
+        history: conversationHistory.slice(0, -1) // All messages except the last one
+      });
+      
+      const streamResult = await chat.sendMessageStream(currentPrompt);
 
       // Create an empty AI message first
       let aiMessage = { role: "assistant", content: "" };

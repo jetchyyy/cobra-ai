@@ -130,7 +130,7 @@ const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteCh
 
           {messageLimitData && !messageLimitData.canSend && (
             <p className="text-xs text-yellow-400 mt-2 text-center">
-              You can create new chats, but can't send messages until reset.
+             You can no longer create new chats until your message limit resets.
             </p>
           )}
         </div>

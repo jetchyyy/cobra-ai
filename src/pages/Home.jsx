@@ -97,33 +97,40 @@ const Home = () => {
     }
   };
 
-  const handleSaveMessage = async (chatId, role, content) => {
-    if (!user) return;
+ const handleSaveMessage = async (chatId, role, content, fileMetadata = null) => {
+  if (!user) return;
 
-    try {
-      const messagesRef = ref(database, `messages/${user.uid}/${chatId}`);
-      const newMessageRef = push(messagesRef);
-      
-      await set(newMessageRef, {
-        role,
-        content,
+  try {
+    const messagesRef = ref(database, `messages/${user.uid}/${chatId}`);
+    const newMessageRef = push(messagesRef);
+    
+    const messageData = {
+      role,
+      content,
+      timestamp: new Date().toISOString()
+    };
+
+    // Add file metadata if it exists
+    if (fileMetadata) {
+      messageData.file = fileMetadata;
+    }
+
+    await set(newMessageRef, messageData);
+
+    // Update chat's last message
+    const chatRef = ref(database, `chats/${user.uid}/${chatId}`);
+    const chatSnapshot = await get(chatRef);
+    if (chatSnapshot.exists()) {
+      await set(chatRef, {
+        ...chatSnapshot.val(),
+        lastMessage: content.substring(0, 100),
         timestamp: new Date().toISOString()
       });
-
-      // Update chat's last message
-      const chatRef = ref(database, `chats/${user.uid}/${chatId}`);
-      const chatSnapshot = await get(chatRef);
-      if (chatSnapshot.exists()) {
-        await set(chatRef, {
-          ...chatSnapshot.val(),
-          lastMessage: content.substring(0, 100),
-          timestamp: new Date().toISOString()
-        });
-      }
-    } catch (error) {
-      console.error('Error saving message:', error);
     }
-  };
+  } catch (error) {
+    console.error('Error saving message:', error);
+  }
+};
 
   const handleSelectChat = (chatId) => {
     setCurrentChatId(chatId);
