@@ -1,11 +1,14 @@
+import { useState } from 'react';
 import { MessageSquare, Plus, X, Clock, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getTimeUntilReset } from './utils/ChatLimitManager';
 import DeleteChatHistory from './DeleteChatHistory';
 import DeleteSingleChat from './DeleteSingleChat';
+import LogoutConfirmationModal from './LogoutConfirmationModal';
 
 const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteChat, isOpen, messageLimitData }) => {
   const { user, logout } = useAuth();
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const getLimitColor = () => {
     if (!messageLimitData) return 'text-gray-400';
@@ -19,6 +22,19 @@ const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteCh
     if (messageLimitData.remaining === 0) return 'bg-red-900/20 border-red-500/30';
     if (messageLimitData.remaining <= 2) return 'bg-yellow-900/20 border-yellow-500/30';
     return 'bg-green-900/20 border-green-500/30';
+  };
+
+  const handleLogoutClick = () => {
+    setShowLogoutModal(true);
+  };
+
+  const handleLogoutConfirm = () => {
+    setShowLogoutModal(false);
+    logout();
+  };
+
+  const handleLogoutCancel = () => {
+    setShowLogoutModal(false);
   };
 
   return (
@@ -184,7 +200,7 @@ const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteCh
               </div>
             </div>
             <button
-              onClick={logout}
+              onClick={handleLogoutClick}
               className="text-gray-400 hover:text-white text-sm transition duration-200"
             >
               Logout
@@ -192,6 +208,13 @@ const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteCh
           </div>
         </div>
       </div>
+
+      {/* Logout Confirmation Modal */}
+      <LogoutConfirmationModal
+        isOpen={showLogoutModal}
+        onConfirm={handleLogoutConfirm}
+        onCancel={handleLogoutCancel}
+      />
     </>
   );
 };
