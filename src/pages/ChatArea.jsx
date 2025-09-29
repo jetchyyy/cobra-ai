@@ -1,10 +1,21 @@
-// ChatArea.jsx
+// ChatArea.jsx - Updated with chat limits from props
 import { useState, useRef, useEffect } from 'react';
-import { Send, Menu, Sparkles, Loader, FileText } from 'lucide-react';
+import { Send, Menu, Sparkles, Loader, FileText, AlertCircle } from 'lucide-react';
 import { model } from '../firebase/firebase';
 import FileUpload from '../components/FileUpload';
+import { getChatLimitData, incrementChatCount, getTimeUntilReset } from '../components/utils/ChatLimitManager';
 
-const ChatArea = ({ messages, setMessages, currentChatId, onCreateChat, onSaveMessage, onToggleSidebar }) => {
+const ChatArea = ({ 
+  messages, 
+  setMessages, 
+  currentChatId, 
+  onCreateChat, 
+  onSaveMessage, 
+  onToggleSidebar, 
+  userId,
+  chatLimitData,
+  setChatLimitData 
+}) => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [uploadedFile, setUploadedFile] = useState(null);
@@ -39,6 +50,20 @@ const ChatArea = ({ messages, setMessages, currentChatId, onCreateChat, onSaveMe
       userMessage = userMessage || "Please analyze this document and tell me what it's about.";
     }
 
+    // Check chat limit BEFORE processing anything - only for new chats
+    if (!currentChatId && userId) {
+      const currentLimit = await getChatLimitData(userId);
+      if (!currentLimit.canCreate) {
+        const resetTime = currentLimit.resetTime ? new Date(currentLimit.resetTime) : new Date();
+        const errorMessage = {
+          role: 'assistant',
+          content: `You've reached your daily limit of 5 chats. You can continue with existing chats, but can't create new ones until the reset in ${getTimeUntilReset(resetTime)}.`
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+        return;
+      }
+    }
+
     setInput('');
     setUploadedFile(null);
 
@@ -57,6 +82,12 @@ const ChatArea = ({ messages, setMessages, currentChatId, onCreateChat, onSaveMe
       let chatId = currentChatId;
       if (!chatId) {
         chatId = await onCreateChat(userMessage);
+        
+        // Increment chat count after successful creation
+        if (chatId && userId) {
+          const newLimitData = await incrementChatCount(userId);
+          setChatLimitData(newLimitData);
+        }
       }
 
       // Save user message to Database
@@ -70,31 +101,30 @@ const ChatArea = ({ messages, setMessages, currentChatId, onCreateChat, onSaveMe
         prompt = `I have uploaded a document titled "${fileData.name}". Here is the content:\n\n${fileData.content}\n\nBased on this document, ${userMessage}`;
       }
 
-// Generate AI response (streaming)
-const streamResult = await model.generateContentStream(prompt);
+      // Generate AI response (streaming)
+      const streamResult = await model.generateContentStream(prompt);
 
-// Create an empty AI message first
-let aiMessage = { role: "assistant", content: "" };
-setMessages((prev) => [...prev, aiMessage]);
+      // Create an empty AI message first
+      let aiMessage = { role: "assistant", content: "" };
+      setMessages((prev) => [...prev, aiMessage]);
 
-// Stream chunks into the last message
-for await (const chunk of streamResult.stream) {
-  const chunkText = chunk.text();
-  if (chunkText) {
-    aiMessage.content += chunkText; // keep aiMessage in sync
-    setMessages((prev) => {
-      const updated = [...prev];
-      updated[updated.length - 1].content = aiMessage.content;
-      return updated;
-    });
-  }
-}
+      // Stream chunks into the last message
+      for await (const chunk of streamResult.stream) {
+        const chunkText = chunk.text();
+        if (chunkText) {
+          aiMessage.content += chunkText;
+          setMessages((prev) => {
+            const updated = [...prev];
+            updated[updated.length - 1].content = aiMessage.content;
+            return updated;
+          });
+        }
+      }
 
-// Save AI message once it’s complete
-if (chatId) {
-  await onSaveMessage(chatId, "assistant", aiMessage.content);
-}
-
+      // Save AI message once it's complete
+      if (chatId) {
+        await onSaveMessage(chatId, "assistant", aiMessage.content);
+      }
 
     } catch (error) {
       console.error('Error generating response:', error);
@@ -118,18 +148,49 @@ if (chatId) {
   return (
     <div className="flex-1 flex flex-col bg-gray-900">
       {/* Header */}
-      <div className="bg-gray-800 border-b border-gray-700 p-4 flex items-center">
-        <button
-          onClick={onToggleSidebar}
-          className="lg:hidden text-gray-400 hover:text-white mr-4"
-        >
-          <Menu className="w-6 h-6" />
-        </button>
+      <div className="bg-gray-800 border-b border-gray-700 p-4 flex items-center justify-between">
         <div className="flex items-center">
+          <button
+            onClick={onToggleSidebar}
+            className="lg:hidden text-gray-400 hover:text-white mr-4"
+          >
+            <Menu className="w-6 h-6" />
+          </button>
           <Sparkles className="w-6 h-6 text-yellow-400 mr-2" />
           <h2 className="text-white font-semibold">Cobra AI Assistant</h2>
         </div>
+        
+        {/* Chat Limit Indicator - Mobile View */}
+        {chatLimitData && (
+          <div className="hidden md:flex items-center space-x-2">
+            <div className={`text-sm ${chatLimitData.canCreate ? 'text-gray-400' : 'text-red-400'}`}>
+              {chatLimitData.remaining} chats remaining
+            </div>
+            {!chatLimitData.canCreate && (
+              <div className="text-xs text-gray-500">
+                Resets in {getTimeUntilReset(new Date(chatLimitData.resetTime))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Chat Limit Warning Banner */}
+      {chatLimitData && !chatLimitData.canCreate && messages.length === 0 && (
+        <div className="bg-yellow-900/20 border-b border-yellow-500/30 p-4">
+          <div className="flex items-start space-x-3 max-w-4xl mx-auto">
+            <AlertCircle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-yellow-300 text-sm font-medium">
+                Daily chat limit reached
+              </p>
+              <p className="text-yellow-400/80 text-xs mt-1">
+                You've used all 5 chats. You can continue with existing chats, but can't create new ones until the reset in {getTimeUntilReset(new Date(chatLimitData.resetTime))}.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -140,26 +201,31 @@ if (chatId) {
               <h3 className="text-2xl font-bold text-white mb-2">
                 Welcome to Cobra AI
               </h3>
-              <p className="text-gray-400 mb-6">
+              <p className="text-gray-400 mb-2">
                 Your intelligent study assistant. Upload documents or ask me anything!
               </p>
+              {chatLimitData && (
+                <p className="text-purple-400 text-sm mb-6">
+                  {chatLimitData.remaining} of 5 chats remaining today
+                </p>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
-                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-purple-500 transition cursor-pointer">
                   <p className="text-purple-300 text-sm">
                     "Summarize the key concepts in photosynthesis"
                   </p>
                 </div>
-                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-purple-500 transition cursor-pointer">
                   <p className="text-purple-300 text-sm">
                     "Upload a PDF and ask questions about it"
                   </p>
                 </div>
-                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-purple-500 transition cursor-pointer">
                   <p className="text-purple-300 text-sm">
                     "Help me understand the water cycle"
                   </p>
                 </div>
-                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-purple-500 transition cursor-pointer">
                   <p className="text-purple-300 text-sm">
                     "Create a study plan for my exams"
                   </p>

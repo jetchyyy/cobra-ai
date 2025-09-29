@@ -1,141 +1,168 @@
-// Home.jsx
 import { useState, useEffect } from 'react';
-import { useAuth } from '../context/AuthContext';
-import ChatSidebar from '../components/ChatSidebar';
-import ChatArea from './ChatArea';
-import { ref, push, set, get, query, orderByChild, limitToLast } from 'firebase/database';
+import { ref, push, set, get, onValue } from 'firebase/database';
 import { database } from '../firebase/firebase';
+import { useAuth } from '../context/AuthContext';
+import Sidebar from '../components/ChatSidebar';
+import ChatArea from './ChatArea';
 
-const Home = () => {
+const Home = ({ chatLimitData, setChatLimitData }) => {
   const { user } = useAuth();
   const [chats, setChats] = useState([]);
   const [currentChatId, setCurrentChatId] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  // Load user's chats from Firebase
   useEffect(() => {
-    if (user) {
-      loadChats();
-    }
-  }, [user]);
+    if (!user) return;
 
-  const loadChats = async () => {
-    try {
-      const chatsRef = ref(database, `chats/${user.uid}`);
-      const snapshot = await get(chatsRef);
-      
-      if (snapshot.exists()) {
-        const chatsData = snapshot.val();
-        const loadedChats = Object.keys(chatsData)
-          .map(key => ({
-            id: key,
-            ...chatsData[key]
-          }))
-          .sort((a, b) => b.createdAt - a.createdAt);
-        
-        setChats(loadedChats);
+    const chatsRef = ref(database, `chats/${user.uid}`);
+    const unsubscribe = onValue(chatsRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const chatsList = Object.entries(data).map(([id, chat]) => ({
+          id,
+          ...chat
+        }));
+        // Sort by timestamp, newest first
+        chatsList.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        setChats(chatsList);
       } else {
         setChats([]);
       }
-    } catch (error) {
-      console.error('Error loading chats:', error);
-    }
-  };
+    });
 
-  const createNewChat = async (firstMessage) => {
+    return () => unsubscribe();
+  }, [user]);
+
+  // Load messages for current chat
+  useEffect(() => {
+    if (!currentChatId || !user) {
+      setMessages([]);
+      return;
+    }
+
+    const messagesRef = ref(database, `messages/${user.uid}/${currentChatId}`);
+    const unsubscribe = onValue(messagesRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const messagesList = Object.values(data);
+        messagesList.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        setMessages(messagesList);
+      } else {
+        setMessages([]);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [currentChatId, user]);
+
+  const handleCreateChat = async (firstMessage) => {
+    if (!user) return;
+
     try {
-      const chatRef = push(ref(database, `chats/${user.uid}`));
-      const chatId = chatRef.key;
+      const chatsRef = ref(database, `chats/${user.uid}`);
+      const newChatRef = push(chatsRef);
       
       const chatData = {
         title: firstMessage.substring(0, 50) + (firstMessage.length > 50 ? '...' : ''),
-        createdAt: Date.now(),
-        updatedAt: Date.now()
+        timestamp: new Date().toISOString(),
+        lastMessage: firstMessage
       };
-      
-      await set(chatRef, chatData);
-      
-      const newChat = { id: chatId, ...chatData };
-      setChats([newChat, ...chats]);
-      setCurrentChatId(chatId);
-      
-      return chatId;
+
+      await set(newChatRef, chatData);
+      setCurrentChatId(newChatRef.key);
+      return newChatRef.key;
     } catch (error) {
       console.error('Error creating chat:', error);
-      return null;
+      throw error;
     }
   };
 
-  const saveMessage = async (chatId, role, content) => {
+  const handleSaveMessage = async (chatId, role, content) => {
+    if (!user) return;
+
     try {
-      const messageRef = push(ref(database, `messages/${chatId}`));
-      await set(messageRef, {
+      const messagesRef = ref(database, `messages/${user.uid}/${chatId}`);
+      const newMessageRef = push(messagesRef);
+      
+      await set(newMessageRef, {
         role,
         content,
-        timestamp: Date.now()
+        timestamp: new Date().toISOString()
       });
 
-      // Update chat's updatedAt timestamp
-      const chatRef = ref(database, `chats/${user.uid}/${chatId}/updatedAt`);
-      await set(chatRef, Date.now());
+      // Update chat's last message
+      const chatRef = ref(database, `chats/${user.uid}/${chatId}`);
+      const chatSnapshot = await get(chatRef);
+      if (chatSnapshot.exists()) {
+        await set(chatRef, {
+          ...chatSnapshot.val(),
+          lastMessage: content.substring(0, 100),
+          timestamp: new Date().toISOString()
+        });
+      }
     } catch (error) {
       console.error('Error saving message:', error);
     }
   };
 
-  const loadChatMessages = async (chatId) => {
-    try {
-      const messagesRef = ref(database, `messages/${chatId}`);
-      const snapshot = await get(messagesRef);
-      
-      if (snapshot.exists()) {
-        const messagesData = snapshot.val();
-        const loadedMessages = Object.keys(messagesData)
-          .map(key => ({
-            id: key,
-            ...messagesData[key]
-          }))
-          .sort((a, b) => a.timestamp - b.timestamp);
-        
-        setMessages(loadedMessages);
-      } else {
-        setMessages([]);
-      }
-      
-      setCurrentChatId(chatId);
-    } catch (error) {
-      console.error('Error loading messages:', error);
-    }
+  const handleSelectChat = (chatId) => {
+    setCurrentChatId(chatId);
   };
 
   const handleNewChat = () => {
     setCurrentChatId(null);
     setMessages([]);
-    setIsSidebarOpen(false);
   };
 
-  const handleSelectChat = (chatId) => {
-    loadChatMessages(chatId);
-    setIsSidebarOpen(false);
+  const handleDeleteChat = async (chatId) => {
+    if (!user) return;
+
+    try {
+      // Delete chat
+      const chatRef = ref(database, `chats/${user.uid}/${chatId}`);
+      await set(chatRef, null);
+
+      // Delete messages
+      const messagesRef = ref(database, `messages/${user.uid}/${chatId}`);
+      await set(messagesRef, null);
+
+      // If deleted chat was current, clear it
+      if (currentChatId === chatId) {
+        setCurrentChatId(null);
+        setMessages([]);
+      }
+    } catch (error) {
+      console.error('Error deleting chat:', error);
+    }
+  };
+
+  const toggleSidebar = () => {
+    setSidebarOpen(!sidebarOpen);
   };
 
   return (
     <div className="flex h-screen bg-gray-900">
-      <ChatSidebar
+      <Sidebar
         chats={chats}
         currentChatId={currentChatId}
         onSelectChat={handleSelectChat}
         onNewChat={handleNewChat}
-        isOpen={isSidebarOpen}
-        onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
+        onDeleteChat={handleDeleteChat}
+        isOpen={sidebarOpen}
+        chatLimitData={chatLimitData}
       />
       <ChatArea
         messages={messages}
         setMessages={setMessages}
         currentChatId={currentChatId}
-        onCreateChat={createNewChat}
-        onSaveMessage={saveMessage}
-        onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+        onCreateChat={handleCreateChat}
+        onSaveMessage={handleSaveMessage}
+        onToggleSidebar={toggleSidebar}
+        userId={user?.uid}
+        chatLimitData={chatLimitData}
+        setChatLimitData={setChatLimitData}
       />
     </div>
   );
