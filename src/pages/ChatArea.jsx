@@ -1,9 +1,10 @@
-// ChatArea.jsx - Updated with message limits and conversation memory
+// ChatArea.jsx - Updated with embeddings for caching
 import { useState, useRef, useEffect } from 'react';
-import { Send, Menu, Sparkles, Loader, FileText, AlertCircle } from 'lucide-react';
+import { Send, Menu, Sparkles, Loader, FileText, AlertCircle, Zap } from 'lucide-react';
 import { model } from '../firebase/firebase';
 import FileUpload from '../components/FileUpload';
 import { getMessageLimitData, incrementMessageCount, getTimeUntilReset } from '../components/utils/ChatLimitManager';
+import embeddingService from '../components/utils/EmbeddingService';
 
 const ChatArea = ({ 
   messages, 
@@ -20,6 +21,7 @@ const ChatArea = ({
   const [isLoading, setIsLoading] = useState(false);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [showFileUpload, setShowFileUpload] = useState(false);
+  const [cacheHit, setCacheHit] = useState(null);
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -29,6 +31,13 @@ const ChatArea = ({
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Clean old embeddings on component mount
+  useEffect(() => {
+    if (userId) {
+      embeddingService.cleanOldEmbeddings(userId);
+    }
+  }, [userId]);
 
   const handleFileProcessed = (file) => {
     setUploadedFile(file);
@@ -72,11 +81,12 @@ const ChatArea = ({
       role: 'user', 
       content: userMessage,
       file: fileData ? { name: fileData.name, size: fileData.size } : null,
-      fileContent: fileData ? fileData.content : null // Store file content for conversation history
+      fileContent: fileData ? fileData.content : null
     };
     setMessages((prev) => [...prev, newUserMessage]);
 
     setIsLoading(true);
+    setCacheHit(null);
 
     try {
       // Create new chat if this is the first message
@@ -85,73 +95,125 @@ const ChatArea = ({
         chatId = await onCreateChat(userMessage);
       }
 
-      // Save user message to Database
-     // Save user message to Database with file metadata
-if (chatId) {
-  await onSaveMessage(chatId, 'user', userMessage, fileData ? { name: fileData.name, size: fileData.size } : null);
-}
-
-      // Increment message count after user sends a message
-      if (userId) {
-        const newLimitData = await incrementMessageCount(userId);
-        setMessageLimitData(newLimitData);
+      // Save user message to Database with file metadata
+      if (chatId) {
+        await onSaveMessage(chatId, 'user', userMessage, fileData ? { name: fileData.name, size: fileData.size } : null);
       }
 
-      // Build conversation history for context
-      const conversationHistory = [];
-      
-      // Add all previous messages to history
-      for (const msg of messages) {
-        // If this message had a file attached, we need to include it in the content
-        let messageContent = msg.content;
-        if (msg.file && msg.fileContent) {
-          messageContent = `[Document: ${msg.file.name}]\n\n${msg.fileContent}\n\n${msg.content}`;
+      // STEP 1: Check for cached similar query
+      let aiResponseText = null;
+      let usedCache = false;
+
+      if (userId) {
+        console.log('Searching for similar cached queries...');
+        const cachedResult = await embeddingService.searchSimilarQuery(
+          userId, 
+          userMessage, 
+          fileData ? { name: fileData.name, size: fileData.size } : null
+        );
+
+        if (cachedResult) {
+          console.log(`Cache hit! Similarity: ${(cachedResult.similarity * 100).toFixed(1)}%`);
+          aiResponseText = cachedResult.response;
+          usedCache = true;
+          
+          // Show cache hit indicator
+          setCacheHit({
+            similarity: cachedResult.similarity,
+            originalQuery: cachedResult.originalQuery
+          });
+
+          // Clear cache hit indicator after 3 seconds
+          setTimeout(() => setCacheHit(null), 3000);
+        }
+      }
+
+      // STEP 2: If no cache hit, call the API
+      if (!usedCache) {
+        console.log('No cache hit. Calling AI API...');
+        
+        // Increment message count after user sends a message
+        if (userId) {
+          const newLimitData = await incrementMessageCount(userId);
+          setMessageLimitData(newLimitData);
+        }
+
+        // Build conversation history for context
+        const conversationHistory = [];
+        
+        // Add all previous messages to history
+        for (const msg of messages) {
+          let messageContent = msg.content;
+          if (msg.file && msg.fileContent) {
+            messageContent = `[Document: ${msg.file.name}]\n\n${msg.fileContent}\n\n${msg.content}`;
+          }
+          
+          conversationHistory.push({
+            role: msg.role === 'user' ? 'user' : 'model',
+            parts: [{ text: messageContent }]
+          });
+        }
+        
+        // Add current user message with file context if exists
+        let currentPrompt = userMessage;
+        if (fileData) {
+          currentPrompt = `[Document: ${fileData.name}]\n\n${fileData.content}\n\n${userMessage}`;
         }
         
         conversationHistory.push({
-          role: msg.role === 'user' ? 'user' : 'model',
-          parts: [{ text: messageContent }]
+          role: 'user',
+          parts: [{ text: currentPrompt }]
         });
-      }
-      
-      // Add current user message with file context if exists
-      let currentPrompt = userMessage;
-      if (fileData) {
-        currentPrompt = `[Document: ${fileData.name}]\n\n${fileData.content}\n\n${userMessage}`;
-      }
-      
-      conversationHistory.push({
-        role: 'user',
-        parts: [{ text: currentPrompt }]
-      });
 
-      // Generate AI response with full conversation history (streaming)
-      const chat = model.startChat({
-        history: conversationHistory.slice(0, -1) // All messages except the last one
-      });
-      
-      const streamResult = await chat.sendMessageStream(currentPrompt);
+        // Generate AI response with full conversation history (streaming)
+        const chat = model.startChat({
+          history: conversationHistory.slice(0, -1)
+        });
+        
+        const streamResult = await chat.sendMessageStream(currentPrompt);
 
-      // Create an empty AI message first
-      let aiMessage = { role: "assistant", content: "" };
-      setMessages((prev) => [...prev, aiMessage]);
+        // Create an empty AI message first
+        let aiMessage = { role: "assistant", content: "" };
+        setMessages((prev) => [...prev, aiMessage]);
 
-      // Stream chunks into the last message
-      for await (const chunk of streamResult.stream) {
-        const chunkText = chunk.text();
-        if (chunkText) {
-          aiMessage.content += chunkText;
-          setMessages((prev) => {
-            const updated = [...prev];
-            updated[updated.length - 1].content = aiMessage.content;
-            return updated;
-          });
+        // Stream chunks into the last message
+        for await (const chunk of streamResult.stream) {
+          const chunkText = chunk.text();
+          if (chunkText) {
+            aiMessage.content += chunkText;
+            setMessages((prev) => {
+              const updated = [...prev];
+              updated[updated.length - 1].content = aiMessage.content;
+              return updated;
+            });
+          }
         }
+
+        aiResponseText = aiMessage.content;
+
+        // STEP 3: Store the query-response pair in embeddings cache
+        if (userId && aiResponseText) {
+          console.log('Storing query-response in cache...');
+          await embeddingService.storeQueryResponse(
+            userId,
+            userMessage,
+            aiResponseText,
+            fileData ? { name: fileData.name, size: fileData.size } : null
+          );
+        }
+      } else {
+        // If using cache, just add the cached response to messages
+        const cachedMessage = { 
+          role: "assistant", 
+          content: aiResponseText,
+          cached: true 
+        };
+        setMessages((prev) => [...prev, cachedMessage]);
       }
 
-      // Save AI message once it's complete
-      if (chatId) {
-        await onSaveMessage(chatId, "assistant", aiMessage.content);
+      // Save AI message to database
+      if (chatId && aiResponseText) {
+        await onSaveMessage(chatId, "assistant", aiResponseText);
       }
 
     } catch (error) {
@@ -188,7 +250,7 @@ if (chatId) {
           <h2 className="text-white font-semibold">Cobra AI Assistant</h2>
         </div>
         
-        {/* Message Limit Indicator - Mobile View */}
+        {/* Message Limit Indicator */}
         {messageLimitData && (
           <div className="flex items-center space-x-2">
             <div className={`text-sm ${messageLimitData.canSend ? 'text-gray-400' : 'text-red-400'}`}>
@@ -202,6 +264,23 @@ if (chatId) {
           </div>
         )}
       </div>
+
+      {/* Cache Hit Notification */}
+      {cacheHit && (
+        <div className="bg-green-900/20 border-b border-green-500/30 p-3">
+          <div className="flex items-start space-x-3 max-w-4xl mx-auto">
+            <Zap className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-green-300 text-sm font-medium">
+                ⚡ Instant answer from cache ({(cacheHit.similarity * 100).toFixed(0)}% match)
+              </p>
+              <p className="text-green-400/70 text-xs mt-1">
+                Similar to: "{cacheHit.originalQuery.substring(0, 60)}..."
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Message Limit Warning Banner */}
       {messageLimitData && messageLimitData.remaining <= 2 && messageLimitData.remaining > 0 && (
@@ -244,7 +323,7 @@ if (chatId) {
                 Welcome to Cobra AI
               </h3>
               <p className="text-gray-400 mb-2">
-                Your intelligent study assistant. Upload documents or ask me anything!
+                Your intelligent study assistant with smart caching!
               </p>
               {messageLimitData && (
                 <p className="text-purple-400 text-sm mb-6">
@@ -285,12 +364,18 @@ if (chatId) {
                 }`}
               >
                 <div
-                  className={`max-w-3xl rounded-lg p-4 ${
+                  className={`max-w-3xl rounded-lg p-4 relative ${
                     message.role === 'user'
                       ? 'bg-purple-600 text-white'
                       : 'bg-gray-800 text-gray-100'
                   }`}
                 >
+                  {message.cached && (
+                    <div className="absolute -top-2 -right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full flex items-center">
+                      <Zap className="w-3 h-3 mr-1" />
+                      Cached
+                    </div>
+                  )}
                   {message.file && (
                     <div className="flex items-center space-x-2 mb-2 pb-2 border-b border-purple-400/30">
                       <FileText className="w-4 h-4" />
