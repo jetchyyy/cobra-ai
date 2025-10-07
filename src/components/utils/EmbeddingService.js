@@ -1,207 +1,211 @@
-// src/services/EmbeddingService.js
-import { ref, push, get, query, orderByChild } from 'firebase/database';
+// src/services/EmbeddingService.js - Using Gemini Embedding API with FAISS-like search
+import { ref, push, get, set, remove } from 'firebase/database';
 import { database } from '../../firebase/firebase';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 class EmbeddingService {
   constructor() {
-    this.similarityThreshold = 0.85; // Adjust this to control cache hit sensitivity
+    this.similarityThreshold = 0.75; // Cosine similarity threshold
     this.embeddingCache = new Map(); // In-memory cache for faster lookups
+    this.vectorCache = new Map(); // Cache for embedding vectors
+    this.genAI = new GoogleGenerativeAI(import.meta.env.VITE_FIREBASE_API_KEY);
+    this.embeddingModel = this.genAI.getGenerativeModel({ model: "text-embedding-004" });
+    
+    // FAISS-like index structure
+    this.index = {
+      vectors: [],
+      metadata: [],
+      ids: []
+    };
+    this.indexLoaded = false;
   }
 
   /**
-   * Generate a simple embedding using character n-grams and TF-IDF
-   * This is a lightweight alternative to calling an embedding API
+   * Generate embedding vector using Gemini Embedding API
+   */
+  async generateEmbedding(text) {
+    try {
+      // Check if we already have this embedding cached
+      const cacheKey = this.hashText(text);
+      if (this.vectorCache.has(cacheKey)) {
+        return this.vectorCache.get(cacheKey);
+      }
+
+      // Generate embedding using Gemini
+      const result = await this.embeddingModel.embedContent(text);
+      const embedding = result.embedding.values;
+
+      // Cache the embedding
+      this.vectorCache.set(cacheKey, embedding);
+
+      return embedding;
+    } catch (error) {
+      console.error('Error generating embedding:', error);
+      // Fallback to simple embedding if API fails
+      return this.generateSimpleEmbedding(text);
+    }
+  }
+
+  /**
+   * Simple hash function for cache keys
+   */
+  hashText(text) {
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+      const char = text.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return hash.toString();
+  }
+
+  /**
+   * Fallback: Generate simple embedding (TF-IDF style)
    */
   generateSimpleEmbedding(text) {
-    const cleanText = text.toLowerCase().trim();
-    const words = cleanText.split(/\s+/);
+    const words = text.toLowerCase().split(/\s+/);
+    const vocab = new Set(words);
+    const vector = new Array(300).fill(0);
     
-    // Create a feature vector with different text characteristics
-    const features = {
-      // Word-based features
-      wordCount: words.length,
-      avgWordLength: words.reduce((sum, w) => sum + w.length, 0) / words.length,
-      uniqueWords: new Set(words).size,
-      
-      // Character n-grams (trigrams)
-      trigrams: this.extractNGrams(cleanText, 3),
-      
-      // Keyword frequencies (simple TF)
-      keywords: this.extractKeywords(words),
-    };
-    
-    return features;
-  }
-
-  /**
-   * Extract character n-grams from text
-   */
-  extractNGrams(text, n) {
-    const ngrams = {};
-    for (let i = 0; i <= text.length - n; i++) {
-      const ngram = text.slice(i, i + n);
-      ngrams[ngram] = (ngrams[ngram] || 0) + 1;
-    }
-    return ngrams;
-  }
-
-  /**
-   * Extract important keywords with their frequencies
-   */
-  extractKeywords(words) {
-    const stopWords = new Set([
-      'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-      'of', 'with', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-      'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-      'should', 'may', 'might', 'can', 'what', 'which', 'who', 'when', 'where',
-      'why', 'how', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him',
-      'her', 'us', 'them', 'my', 'your', 'his', 'its', 'our', 'their'
-    ]);
-    
-    const keywords = {};
-    words.forEach(word => {
-      const clean = word.replace(/[^\w]/g, '');
-      if (clean.length > 2 && !stopWords.has(clean)) {
-        keywords[clean] = (keywords[clean] || 0) + 1;
-      }
+    // Simple word hashing into fixed-size vector
+    words.forEach((word, idx) => {
+      const hash = this.hashText(word);
+      const index = Math.abs(hash) % 300;
+      vector[index] += 1;
     });
     
-    return keywords;
+    // Normalize
+    const magnitude = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0));
+    return magnitude > 0 ? vector.map(v => v / magnitude) : vector;
   }
 
   /**
-   * Calculate cosine similarity between two embeddings
+   * Calculate cosine similarity between two vectors (FAISS uses this)
    */
-  calculateSimilarity(embedding1, embedding2) {
-    let similarities = [];
-    
-    // Compare trigram similarity
-    const trigramSim = this.compareNGrams(embedding1.trigrams, embedding2.trigrams);
-    similarities.push(trigramSim * 0.4); // 40% weight
-    
-    // Compare keyword similarity
-    const keywordSim = this.compareKeywords(embedding1.keywords, embedding2.keywords);
-    similarities.push(keywordSim * 0.5); // 50% weight
-    
-    // Compare structural features
-    const structureSim = this.compareStructure(embedding1, embedding2);
-    similarities.push(structureSim * 0.1); // 10% weight
-    
-    return similarities.reduce((a, b) => a + b, 0);
-  }
+  cosineSimilarity(vec1, vec2) {
+    if (vec1.length !== vec2.length) {
+      console.error('Vector dimensions do not match');
+      return 0;
+    }
 
-  /**
-   * Compare n-gram distributions
-   */
-  compareNGrams(ngrams1, ngrams2) {
-    const allNGrams = new Set([...Object.keys(ngrams1), ...Object.keys(ngrams2)]);
-    if (allNGrams.size === 0) return 0;
-    
     let dotProduct = 0;
     let mag1 = 0;
     let mag2 = 0;
-    
-    allNGrams.forEach(ngram => {
-      const val1 = ngrams1[ngram] || 0;
-      const val2 = ngrams2[ngram] || 0;
-      dotProduct += val1 * val2;
-      mag1 += val1 * val1;
-      mag2 += val2 * val2;
-    });
-    
+
+    for (let i = 0; i < vec1.length; i++) {
+      dotProduct += vec1[i] * vec2[i];
+      mag1 += vec1[i] * vec1[i];
+      mag2 += vec2[i] * vec2[i];
+    }
+
     const magnitude = Math.sqrt(mag1) * Math.sqrt(mag2);
     return magnitude === 0 ? 0 : dotProduct / magnitude;
   }
 
   /**
-   * Compare keyword distributions
+   * Load FAISS-like index from Firebase
    */
-  compareKeywords(keywords1, keywords2) {
-    const allKeywords = new Set([...Object.keys(keywords1), ...Object.keys(keywords2)]);
-    if (allKeywords.size === 0) return 0;
-    
-    let matches = 0;
-    allKeywords.forEach(keyword => {
-      if (keywords1[keyword] && keywords2[keyword]) {
-        matches++;
-      }
-    });
-    
-    return matches / allKeywords.size;
-  }
+  async loadIndex(userId) {
+    if (this.indexLoaded) return;
 
-  /**
-   * Compare structural features
-   */
-  compareStructure(emb1, emb2) {
-    const wordCountDiff = Math.abs(emb1.wordCount - emb2.wordCount);
-    const wordCountSim = 1 / (1 + wordCountDiff / 10);
-    
-    const lengthDiff = Math.abs(emb1.avgWordLength - emb2.avgWordLength);
-    const lengthSim = 1 / (1 + lengthDiff);
-    
-    return (wordCountSim + lengthSim) / 2;
-  }
-
-  /**
-   * Search for a similar cached response
-   */
-  async searchSimilarQuery(userId, userMessage, fileContext = null) {
     try {
-      // Create a search key based on message and file
-      const searchKey = fileContext 
-        ? `${userMessage}_${fileContext.name}`
-        : userMessage;
-      
-      // Check in-memory cache first
-      if (this.embeddingCache.has(searchKey)) {
-        return this.embeddingCache.get(searchKey);
-      }
-
-      // Generate embedding for the current query
-      const queryEmbedding = this.generateSimpleEmbedding(userMessage);
-      
-      // Get all cached embeddings for this user
       const embeddingsRef = ref(database, `embeddings/${userId}`);
       const snapshot = await get(embeddingsRef);
-      
+
       if (!snapshot.exists()) {
-        return null;
+        this.indexLoaded = true;
+        return;
       }
 
-      const cachedEmbeddings = snapshot.val();
-      let bestMatch = null;
-      let bestSimilarity = 0;
+      const embeddings = snapshot.val();
+      
+      // Build index structure
+      this.index.vectors = [];
+      this.index.metadata = [];
+      this.index.ids = [];
 
-      // Search for the most similar query
-      Object.entries(cachedEmbeddings).forEach(([key, cache]) => {
-        // If file context exists, only match queries with same file
-        if (fileContext && cache.fileName !== fileContext.name) {
-          return;
-        }
-        
-        const similarity = this.calculateSimilarity(
-          queryEmbedding,
-          cache.embedding
-        );
-
-        if (similarity > bestSimilarity && similarity >= this.similarityThreshold) {
-          bestSimilarity = similarity;
-          bestMatch = {
-            response: cache.response,
-            similarity,
-            originalQuery: cache.query,
-            timestamp: cache.timestamp
-          };
+      Object.entries(embeddings).forEach(([id, data]) => {
+        if (data.embedding && Array.isArray(data.embedding)) {
+          this.index.vectors.push(data.embedding);
+          this.index.metadata.push({
+            query: data.query,
+            response: data.response,
+            fileName: data.fileName,
+            fileSize: data.fileSize,
+            timestamp: data.timestamp,
+            hitCount: data.hitCount || 0
+          });
+          this.index.ids.push(id);
         }
       });
 
-      // Cache in memory for faster subsequent lookups
-      if (bestMatch) {
-        this.embeddingCache.set(searchKey, bestMatch);
+      this.indexLoaded = true;
+      console.log(`Loaded ${this.index.vectors.length} embeddings into index`);
+    } catch (error) {
+      console.error('Error loading index:', error);
+      this.indexLoaded = true;
+    }
+  }
+
+  /**
+   * FAISS-like search: Find k nearest neighbors
+   */
+  async searchKNN(queryVector, k = 5, fileContext = null) {
+    const similarities = [];
+
+    for (let i = 0; i < this.index.vectors.length; i++) {
+      const metadata = this.index.metadata[i];
+      
+      // Filter by file if context provided
+      if (fileContext && metadata.fileName !== fileContext.name) {
+        continue;
       }
 
-      return bestMatch;
+      const similarity = this.cosineSimilarity(queryVector, this.index.vectors[i]);
+      
+      if (similarity >= this.similarityThreshold) {
+        similarities.push({
+          similarity,
+          metadata,
+          id: this.index.ids[i],
+          index: i
+        });
+      }
+    }
+
+    // Sort by similarity (descending) and return top k
+    similarities.sort((a, b) => b.similarity - a.similarity);
+    return similarities.slice(0, k);
+  }
+
+  /**
+   * Search for similar queries using FAISS-like approach
+   */
+  async searchSimilarQuery(userId, userMessage, fileContext = null) {
+    try {
+      // Load index if not already loaded
+      await this.loadIndex(userId);
+
+      // Generate query embedding
+      const queryEmbedding = await this.generateEmbedding(userMessage);
+
+      // Search for similar vectors
+      const results = await this.searchKNN(queryEmbedding, 1, fileContext);
+
+      if (results.length === 0) {
+        return null;
+      }
+
+      const bestMatch = results[0];
+      
+      // Return the best match
+      return {
+        response: bestMatch.metadata.response,
+        similarity: bestMatch.similarity,
+        originalQuery: bestMatch.metadata.query,
+        timestamp: bestMatch.metadata.timestamp,
+        embeddingId: bestMatch.id
+      };
     } catch (error) {
       console.error('Error searching similar queries:', error);
       return null;
@@ -213,7 +217,8 @@ class EmbeddingService {
    */
   async storeQueryResponse(userId, userMessage, aiResponse, fileContext = null) {
     try {
-      const embedding = this.generateSimpleEmbedding(userMessage);
+      // Generate embedding for the query
+      const embedding = await this.generateEmbedding(userMessage);
       
       const embeddingData = {
         query: userMessage,
@@ -222,23 +227,26 @@ class EmbeddingService {
         fileName: fileContext ? fileContext.name : null,
         fileSize: fileContext ? fileContext.size : null,
         timestamp: Date.now(),
-        hitCount: 0 // Track how many times this cache is reused
+        hitCount: 0
       };
 
+      // Store in Firebase
       const embeddingsRef = ref(database, `embeddings/${userId}`);
-      await push(embeddingsRef, embeddingData);
+      const newRef = await push(embeddingsRef, embeddingData);
 
-      // Also add to in-memory cache
-      const searchKey = fileContext 
-        ? `${userMessage}_${fileContext.name}`
-        : userMessage;
-      this.embeddingCache.set(searchKey, {
+      // Add to in-memory index
+      this.index.vectors.push(embedding);
+      this.index.metadata.push({
+        query: userMessage,
         response: aiResponse,
-        similarity: 1.0,
-        originalQuery: userMessage,
-        timestamp: Date.now()
+        fileName: fileContext ? fileContext.name : null,
+        fileSize: fileContext ? fileContext.size : null,
+        timestamp: Date.now(),
+        hitCount: 0
       });
+      this.index.ids.push(newRef.key);
 
+      console.log('Stored new embedding. Index size:', this.index.vectors.length);
       return true;
     } catch (error) {
       console.error('Error storing query response:', error);
@@ -249,18 +257,24 @@ class EmbeddingService {
   /**
    * Increment hit count for cache analytics
    */
-  async incrementHitCount(userId, embeddingKey) {
+  async incrementHitCount(userId, embeddingId) {
     try {
-      const embeddingRef = ref(database, `embeddings/${userId}/${embeddingKey}`);
+      const embeddingRef = ref(database, `embeddings/${userId}/${embeddingId}`);
       const snapshot = await get(embeddingRef);
       
       if (snapshot.exists()) {
         const data = snapshot.val();
-        await embeddingRef.set({
+        await set(embeddingRef, {
           ...data,
           hitCount: (data.hitCount || 0) + 1,
           lastHit: Date.now()
         });
+
+        // Update in-memory index
+        const idx = this.index.ids.indexOf(embeddingId);
+        if (idx !== -1) {
+          this.index.metadata[idx].hitCount = (this.index.metadata[idx].hitCount || 0) + 1;
+        }
       }
     } catch (error) {
       console.error('Error incrementing hit count:', error);
@@ -268,7 +282,7 @@ class EmbeddingService {
   }
 
   /**
-   * Clear old cached embeddings (older than 30 days)
+   * Clean old embeddings (older than 30 days with low usage)
    */
   async cleanOldEmbeddings(userId) {
     try {
@@ -278,15 +292,22 @@ class EmbeddingService {
       
       if (!snapshot.exists()) return;
 
-      const updates = {};
+      const deletionPromises = [];
       Object.entries(snapshot.val()).forEach(([key, value]) => {
-        if (value.timestamp < thirtyDaysAgo && (value.hitCount || 0) < 2) {
-          updates[key] = null; // Mark for deletion
+        if (value.timestamp < thirtyDaysAgo && (value.hitCount || 0) < 3) {
+          deletionPromises.push(
+            remove(ref(database, `embeddings/${userId}/${key}`))
+          );
         }
       });
 
-      if (Object.keys(updates).length > 0) {
-        await embeddingsRef.update(updates);
+      if (deletionPromises.length > 0) {
+        await Promise.all(deletionPromises);
+        console.log(`Cleaned ${deletionPromises.length} old embeddings`);
+        
+        // Reload index after cleanup
+        this.indexLoaded = false;
+        await this.loadIndex(userId);
       }
     } catch (error) {
       console.error('Error cleaning old embeddings:', error);
@@ -294,10 +315,46 @@ class EmbeddingService {
   }
 
   /**
-   * Clear in-memory cache
+   * Get index statistics
    */
-  clearMemoryCache() {
+  getIndexStats() {
+    return {
+      totalVectors: this.index.vectors.length,
+      memorySize: this.calculateIndexSize(),
+      cacheSize: this.embeddingCache.size
+    };
+  }
+
+  /**
+   * Calculate approximate index size in MB
+   */
+  calculateIndexSize() {
+    const vectorSize = this.index.vectors.reduce((total, vec) => {
+      return total + vec.length * 8; // 8 bytes per float64
+    }, 0);
+    return (vectorSize / (1024 * 1024)).toFixed(2);
+  }
+
+  /**
+   * Clear in-memory cache and index
+   */
+  clearCache() {
     this.embeddingCache.clear();
+    this.vectorCache.clear();
+    this.index = {
+      vectors: [],
+      metadata: [],
+      ids: []
+    };
+    this.indexLoaded = false;
+  }
+
+  /**
+   * Rebuild index (useful after bulk operations)
+   */
+  async rebuildIndex(userId) {
+    this.clearCache();
+    await this.loadIndex(userId);
   }
 }
 
