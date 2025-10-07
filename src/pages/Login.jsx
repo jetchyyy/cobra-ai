@@ -117,94 +117,97 @@ const Login = () => {
           </div>
         </div>
 
-        <div className="space-y-4 mb-4">
-          {isRegister && (
-            <div>
-              <div className="relative">
-                <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-red-300" />
-                <input
-                  type="text"
-                  name="name"
-                  placeholder="Full Name"
-                  value={formData.name}
-                  onChange={handleChange}
-                  className="w-full bg-white/10 border border-red-900/30 rounded-lg py-3 pl-10 pr-4 text-white placeholder-red-200 focus:outline-none focus:ring-2 focus:ring-red-500"
-                />
-              </div>
-              {errors.name && (
-                <p className="text-red-300 text-sm mt-1">{errors.name}</p>
-              )}
-            </div>
-          )}
+    <form onSubmit={handleSubmit} className="space-y-4 mb-4">
+  {isRegister && (
+    <div>
+      <div className="relative">
+        <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-red-300" />
+        <input
+          type="text"
+          name="name"
+          placeholder="Full Name"
+          value={formData.name}
+          onChange={handleChange}
+          className="w-full bg-white/10 border border-red-900/30 rounded-lg py-3 pl-10 pr-4 text-white placeholder-red-200 focus:outline-none focus:ring-2 focus:ring-red-500"
+        />
+      </div>
+      {errors.name && (
+        <p className="text-red-300 text-sm mt-1">{errors.name}</p>
+      )}
+    </div>
+  )}
 
-          <div>
-            <div className="relative">
-              <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-red-300" />
-              <input
-                type="email"
-                name="email"
-                placeholder="Email"
-                value={formData.email}
-                onChange={handleChange}
-                className="w-full bg-white/10 border border-red-900/30 rounded-lg py-3 pl-10 pr-4 text-white placeholder-red-200 focus:outline-none focus:ring-2 focus:ring-red-500"
-              />
-            </div>
-            {errors.email && (
-              <p className="text-red-300 text-sm mt-1">{errors.email}</p>
-            )}
-          </div>
+  {/* Email */}
+  <div>
+    <div className="relative">
+      <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-red-300" />
+      <input
+        type="email"
+        name="email"
+        placeholder="Email"
+        value={formData.email}
+        onChange={handleChange}
+        className="w-full bg-white/10 border border-red-900/30 rounded-lg py-3 pl-10 pr-4 text-white placeholder-red-200 focus:outline-none focus:ring-2 focus:ring-red-500"
+      />
+    </div>
+    {errors.email && (
+      <p className="text-red-300 text-sm mt-1">{errors.email}</p>
+    )}
+  </div>
 
-          <div>
-            <div className="relative">
-              <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-red-300" />
-              <input
-                type={showPassword ? "text" : "password"}
-                name="password"
-                placeholder="Password"
-                value={formData.password}
-                onChange={handleChange}
-                className="w-full bg-white/10 border border-red-900/30 rounded-lg py-3 pl-10 pr-10 text-white placeholder-red-200 focus:outline-none focus:ring-2 focus:ring-red-500"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-red-300 hover:text-red-200"
-              >
-                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-              </button>
-            </div>
-            {errors.password && (
-              <p className="text-red-300 text-sm mt-1">{errors.password}</p>
-            )}
-          </div>
+  {/* Password */}
+  <div>
+    <div className="relative">
+      <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-red-300" />
+      <input
+        type={showPassword ? "text" : "password"}
+        name="password"
+        placeholder="Password"
+        value={formData.password}
+        onChange={handleChange}
+        className="w-full bg-white/10 border border-red-900/30 rounded-lg py-3 pl-10 pr-10 text-white placeholder-red-200 focus:outline-none focus:ring-2 focus:ring-red-500"
+      />
+      <button
+        type="button"
+        onClick={() => setShowPassword(!showPassword)}
+        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-red-300 hover:text-red-200"
+      >
+        {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+      </button>
+    </div>
+    {errors.password && (
+      <p className="text-red-300 text-sm mt-1">{errors.password}</p>
+    )}
+  </div>
 
-          {isRegister && (
-            <div>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-red-300" />
-                <input
-                  type={showPassword ? "text" : "password"}
-                  name="confirmPassword"
-                  placeholder="Confirm Password"
-                  value={formData.confirmPassword}
-                  onChange={handleChange}
-                  className="w-full bg-white/10 border border-red-900/30 rounded-lg py-3 pl-10 pr-4 text-white placeholder-red-200 focus:outline-none focus:ring-2 focus:ring-red-500"
-                />
-              </div>
-              {errors.confirmPassword && (
-                <p className="text-red-300 text-sm mt-1">{errors.confirmPassword}</p>
-              )}
-            </div>
-          )}
+  {isRegister && (
+    <div>
+      <div className="relative">
+        <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-red-300" />
+        <input
+          type={showPassword ? "text" : "password"}
+          name="confirmPassword"
+          placeholder="Confirm Password"
+          value={formData.confirmPassword}
+          onChange={handleChange}
+          className="w-full bg-white/10 border border-red-900/30 rounded-lg py-3 pl-10 pr-4 text-white placeholder-red-200 focus:outline-none focus:ring-2 focus:ring-red-500"
+        />
+      </div>
+      {errors.confirmPassword && (
+        <p className="text-red-300 text-sm mt-1">{errors.confirmPassword}</p>
+      )}
+    </div>
+  )}
 
-          <button
-            onClick={handleSubmit}
-            disabled={loading}
-            className="w-full bg-red-700 hover:bg-red-800 disabled:bg-red-900 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 shadow-lg"
-          >
-            {loading ? 'Please wait...' : (isRegister ? 'Create Account' : 'Sign In')}
-          </button>
-        </div>
+  <button
+    type="submit"
+    disabled={loading}
+    className="w-full bg-red-700 hover:bg-red-800 disabled:bg-red-900 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 shadow-lg"
+  >
+    {loading ? 'Please wait...' : (isRegister ? 'Create Account' : 'Sign In')}
+  </button>
+</form>
+
 
         <div className="relative my-6">
           <div className="absolute inset-0 flex items-center">

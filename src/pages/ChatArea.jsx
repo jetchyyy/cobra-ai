@@ -1,10 +1,13 @@
-// ChatArea.jsx - Updated with embeddings for caching
-import { useState, useRef, useEffect } from 'react';
-import { Send, Menu, Sparkles, Loader, FileText, AlertCircle, Zap } from 'lucide-react';
+// ChatArea.jsx - Refactored with modular components
+import { useState, useEffect } from 'react';
 import { model } from '../firebase/firebase';
-import FileUpload from '../components/FileUpload';
 import { getMessageLimitData, incrementMessageCount, getTimeUntilReset } from '../components/utils/ChatLimitManager';
 import embeddingService from '../components/utils/EmbeddingService';
+
+import ChatHeader from './Chat/ChatHeader';
+import Banner from './Chat/Banner';
+import MessageList from './Chat/MessageList';
+import ChatInput from './Chat/ChatInput';
 
 const ChatArea = ({ 
   messages, 
@@ -22,15 +25,6 @@ const ChatArea = ({
   const [uploadedFile, setUploadedFile] = useState(null);
   const [showFileUpload, setShowFileUpload] = useState(false);
   const [cacheHit, setCacheHit] = useState(null);
-  const messagesEndRef = useRef(null);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
 
   // Clean old embeddings on component mount
   useEffect(() => {
@@ -46,6 +40,246 @@ const ChatArea = ({
 
   const handleRemoveFile = () => {
     setUploadedFile(null);
+  };
+
+  const formatBotMessage = (content) => {
+    // Remove asterisks used for bold/italic markdown
+    content = content.replace(/\*\*\*/g, ''); // Remove triple asterisks
+    content = content.replace(/\*\*/g, '');   // Remove double asterisks (bold)
+    content = content.replace(/\*/g, '');     // Remove single asterisks (italic)
+    
+    const lines = content.split('\n');
+    const elements = [];
+    let i = 0;
+
+    while (i < lines.length) {
+      const line = lines[i].trim();
+
+      if (!line) {
+        i++;
+        continue;
+      }
+
+      if (line.endsWith(':') && line.length < 100 && !line.includes('http')) {
+        elements.push({ type: 'header', content: line });
+        i++;
+        continue;
+      }
+
+      if (line.startsWith('##')) {
+        elements.push({ type: 'header', content: line.replace(/^#+\s*/, '') });
+        i++;
+        continue;
+      }
+
+      if (line === line.toUpperCase() && line.length > 3 && line.length < 80) {
+        elements.push({ type: 'subheader', content: line });
+        i++;
+        continue;
+      }
+
+      if (/^\d+\.\s/.test(line)) {
+        const listItems = [];
+        while (i < lines.length && /^\d+\.\s/.test(lines[i].trim())) {
+          listItems.push(lines[i].trim().replace(/^\d+\.\s*/, ''));
+          i++;
+        }
+        elements.push({ type: 'numbered-list', items: listItems });
+        continue;
+      }
+
+      if (/^[-*•]\s/.test(line)) {
+        const listItems = [];
+        while (i < lines.length && /^[-*•]\s/.test(lines[i].trim())) {
+          listItems.push(lines[i].trim().replace(/^[-*•]\s*/, ''));
+          i++;
+        }
+        elements.push({ type: 'bullet-list', items: listItems });
+        continue;
+      }
+
+      if (line.startsWith('```')) {
+        const codeLines = [];
+        i++;
+        while (i < lines.length && !lines[i].trim().startsWith('```')) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        i++;
+        elements.push({ type: 'code', content: codeLines.join('\n') });
+        continue;
+      }
+
+      if (/^(Note|Important|Remember|Warning|Tip|Key Point):/i.test(line)) {
+        elements.push({ type: 'callout', content: line });
+        i++;
+        continue;
+      }
+
+      if (line.includes(':') && line.split(':')[0].length < 50 && line.split(':')[0].length > 2) {
+        const [key, ...valueParts] = line.split(':');
+        const value = valueParts.join(':').trim();
+        if (key.length > 0 && value.length > 0) {
+          elements.push({ type: 'definition', key: key.trim(), value });
+          i++;
+          continue;
+        }
+      }
+
+      if (/^(Example|e\.g\.|For example)/i.test(line)) {
+        elements.push({ type: 'example', content: line });
+        i++;
+        continue;
+      }
+
+      const paragraphLines = [];
+      while (i < lines.length && lines[i].trim() && 
+             !/^\d+\.\s/.test(lines[i].trim()) && 
+             !/^[-*•]\s/.test(lines[i].trim()) &&
+             !lines[i].trim().endsWith(':') &&
+             !/^(Note|Important|Remember|Warning|Tip|Key Point):/i.test(lines[i].trim()) &&
+             !lines[i].trim().startsWith('```')) {
+        paragraphLines.push(lines[i].trim());
+        i++;
+      }
+      if (paragraphLines.length > 0) {
+        elements.push({ type: 'paragraph', content: paragraphLines.join(' ') });
+      }
+    }
+
+    return elements.length > 0 ? elements : [{ type: 'paragraph', content }];
+  };
+
+  const renderFormattedContent = (elements) => {
+    return elements.map((element, idx) => {
+      switch (element.type) {
+        case 'header':
+          return (
+            <div key={idx} className="mb-5 mt-6 first:mt-0">
+              <div className="flex items-center mb-2">
+                <div className="w-1.5 h-8 bg-gradient-to-b from-blue-400 to-blue-600 rounded-full mr-3"></div>
+                <h3 className="text-xl font-bold text-blue-300">
+                  {element.content}
+                </h3>
+              </div>
+              <div className="h-px bg-gradient-to-r from-blue-500/50 to-transparent ml-5"></div>
+            </div>
+          );
+
+        case 'subheader':
+          return (
+            <div key={idx} className="mb-4 mt-4">
+              <h4 className="text-base font-semibold text-purple-300 tracking-wide">
+                {element.content}
+              </h4>
+            </div>
+          );
+
+        case 'numbered-list':
+          return (
+            <div key={idx} className="mb-5 ml-2">
+              <ol className="space-y-3">
+                {element.items.map((item, itemIdx) => (
+                  <li key={itemIdx} className="flex items-start group">
+                    <span className="flex-shrink-0 w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 text-white text-sm font-bold flex items-center justify-center mr-3 mt-0.5 shadow-md group-hover:scale-110 transition-transform">
+                      {itemIdx + 1}
+                    </span>
+                    <span className="text-gray-100 leading-relaxed flex-1 pt-0.5 text-[15px]">{item}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          );
+
+        case 'bullet-list':
+          return (
+            <div key={idx} className="mb-5 ml-2">
+              <ul className="space-y-3">
+                {element.items.map((item, itemIdx) => (
+                  <li key={itemIdx} className="flex items-start group">
+                    <span className="flex-shrink-0 w-2.5 h-2.5 rounded-full bg-gradient-to-br from-purple-400 to-pink-400 mr-3 mt-2 group-hover:scale-125 transition-transform"></span>
+                    <span className="text-gray-100 leading-relaxed flex-1 text-[15px]">{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+
+        case 'code':
+          return (
+            <div key={idx} className="mb-5 bg-gray-900/50 rounded-xl border border-gray-700 overflow-hidden shadow-lg">
+              <div className="bg-gradient-to-r from-gray-800 to-gray-750 px-4 py-2.5 border-b border-gray-700 flex items-center">
+                <div className="flex space-x-1.5 mr-3">
+                  <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
+                  <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
+                  <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
+                </div>
+                <span className="text-xs text-gray-400 font-mono">Formula / Code</span>
+              </div>
+              <pre className="p-5 overflow-x-auto">
+                <code className="text-sm text-emerald-300 font-mono leading-relaxed">{element.content}</code>
+              </pre>
+            </div>
+          );
+
+        case 'callout':
+          const calloutType = element.content.split(':')[0].toLowerCase();
+          const calloutColors = {
+            note: { bg: 'bg-blue-900/20', border: 'border-blue-500', icon: '📌', text: 'text-blue-300' },
+            important: { bg: 'bg-red-900/20', border: 'border-red-500', icon: '⚠️', text: 'text-red-300' },
+            remember: { bg: 'bg-purple-900/20', border: 'border-purple-500', icon: '🧠', text: 'text-purple-300' },
+            warning: { bg: 'bg-orange-900/20', border: 'border-orange-500', icon: '⚠️', text: 'text-orange-300' },
+            tip: { bg: 'bg-green-900/20', border: 'border-green-500', icon: '💡', text: 'text-green-300' },
+            'key point': { bg: 'bg-yellow-900/20', border: 'border-yellow-500', icon: '🔑', text: 'text-yellow-300' }
+          };
+          const colors = calloutColors[calloutType] || calloutColors.note;
+          
+          return (
+            <div key={idx} className={`mb-5 ${colors.bg} rounded-xl p-4 border-l-4 ${colors.border} shadow-md`}>
+              <div className="flex items-start">
+                <span className="text-2xl mr-3 flex-shrink-0">{colors.icon}</span>
+                <p className={`${colors.text} text-[15px] leading-relaxed font-medium`}>
+                  {element.content}
+                </p>
+              </div>
+            </div>
+          );
+
+        case 'definition':
+          return (
+            <div key={idx} className="mb-4 bg-gradient-to-r from-indigo-900/20 to-purple-900/20 rounded-lg p-4 border-l-4 border-indigo-400 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex flex-col sm:flex-row sm:items-center">
+                <span className="text-indigo-300 font-bold text-[15px] mb-1 sm:mb-0 sm:min-w-[120px]">
+                  {element.key}:
+                </span>
+                <span className="text-gray-100 text-[15px] leading-relaxed sm:ml-3 flex-1">
+                  {element.value}
+                </span>
+              </div>
+            </div>
+          );
+
+        case 'example':
+          return (
+            <div key={idx} className="mb-5 bg-teal-900/20 rounded-xl p-4 border-l-4 border-teal-400 shadow-sm">
+              <div className="flex items-start">
+                <span className="text-2xl mr-3 flex-shrink-0">📚</span>
+                <p className="text-teal-200 text-[15px] leading-relaxed">
+                  {element.content}
+                </p>
+              </div>
+            </div>
+          );
+
+        case 'paragraph':
+        default:
+          return (
+            <p key={idx} className="text-gray-100 leading-[1.8] mb-4 last:mb-0 text-[15px]">
+              {element.content}
+            </p>
+          );
+      }
+    });
   };
 
   const handleSendMessage = async () => {
@@ -68,7 +302,6 @@ const ChatArea = ({
     let userMessage = input.trim();
     const fileData = uploadedFile;
     
-    // If there's a file, create a message that includes file context
     if (fileData) {
       userMessage = userMessage || "Please analyze this document and tell me what it's about.";
     }
@@ -76,7 +309,6 @@ const ChatArea = ({
     setInput('');
     setUploadedFile(null);
 
-    // Add user message to UI
     const newUserMessage = { 
       role: 'user', 
       content: userMessage,
@@ -89,18 +321,16 @@ const ChatArea = ({
     setCacheHit(null);
 
     try {
-      // Create new chat if this is the first message
       let chatId = currentChatId;
       if (!chatId) {
         chatId = await onCreateChat(userMessage);
       }
 
-      // Save user message to Database with file metadata
       if (chatId) {
         await onSaveMessage(chatId, 'user', userMessage, fileData ? { name: fileData.name, size: fileData.size } : null);
       }
 
-      // STEP 1: Check for cached similar query
+      // Check for cached similar query
       let aiResponseText = null;
       let usedCache = false;
 
@@ -117,31 +347,26 @@ const ChatArea = ({
           aiResponseText = cachedResult.response;
           usedCache = true;
           
-          // Show cache hit indicator
           setCacheHit({
             similarity: cachedResult.similarity,
             originalQuery: cachedResult.originalQuery
           });
 
-          // Clear cache hit indicator after 3 seconds
           setTimeout(() => setCacheHit(null), 3000);
         }
       }
 
-      // STEP 2: If no cache hit, call the API
+      // If no cache hit, call the API
       if (!usedCache) {
         console.log('No cache hit. Calling AI API...');
         
-        // Increment message count after user sends a message
         if (userId) {
           const newLimitData = await incrementMessageCount(userId);
           setMessageLimitData(newLimitData);
         }
 
-        // Build conversation history for context
         const conversationHistory = [];
         
-        // Add all previous messages to history
         for (const msg of messages) {
           let messageContent = msg.content;
           if (msg.file && msg.fileContent) {
@@ -154,7 +379,6 @@ const ChatArea = ({
           });
         }
         
-        // Add current user message with file context if exists
         let currentPrompt = userMessage;
         if (fileData) {
           currentPrompt = `[Document: ${fileData.name}]\n\n${fileData.content}\n\n${userMessage}`;
@@ -165,18 +389,15 @@ const ChatArea = ({
           parts: [{ text: currentPrompt }]
         });
 
-        // Generate AI response with full conversation history (streaming)
         const chat = model.startChat({
           history: conversationHistory.slice(0, -1)
         });
         
         const streamResult = await chat.sendMessageStream(currentPrompt);
 
-        // Create an empty AI message first
         let aiMessage = { role: "assistant", content: "" };
         setMessages((prev) => [...prev, aiMessage]);
 
-        // Stream chunks into the last message
         for await (const chunk of streamResult.stream) {
           const chunkText = chunk.text();
           if (chunkText) {
@@ -191,7 +412,6 @@ const ChatArea = ({
 
         aiResponseText = aiMessage.content;
 
-        // STEP 3: Store the query-response pair in embeddings cache
         if (userId && aiResponseText) {
           console.log('Storing query-response in cache...');
           await embeddingService.storeQueryResponse(
@@ -202,7 +422,6 @@ const ChatArea = ({
           );
         }
       } else {
-        // If using cache, just add the cached response to messages
         const cachedMessage = { 
           role: "assistant", 
           content: aiResponseText,
@@ -211,7 +430,6 @@ const ChatArea = ({
         setMessages((prev) => [...prev, cachedMessage]);
       }
 
-      // Save AI message to database
       if (chatId && aiResponseText) {
         await onSaveMessage(chatId, "assistant", aiResponseText);
       }
@@ -228,251 +446,38 @@ const ChatArea = ({
     }
   };
 
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
-  };
-
   return (
     <div className="flex-1 flex flex-col bg-gray-900">
-      {/* Header */}
-      <div className="bg-gray-800 border-b border-gray-700 p-4 flex items-center justify-between">
-        <div className="flex items-center">
-          <button
-            onClick={onToggleSidebar}
-            className="lg:hidden text-gray-400 hover:text-white mr-4"
-          >
-            <Menu className="w-6 h-6" />
-          </button>
-          <Sparkles className="w-6 h-6 text-yellow-400 mr-2" />
-          <h2 className="text-white font-semibold">Cobra AI Assistant</h2>
-        </div>
-        
-        {/* Message Limit Indicator */}
-        {messageLimitData && (
-          <div className="flex items-center space-x-2">
-            <div className={`text-sm ${messageLimitData.canSend ? 'text-gray-400' : 'text-red-400'}`}>
-              {messageLimitData.remaining}/5 messages
-            </div>
-            {!messageLimitData.canSend && (
-              <div className="text-xs text-gray-500">
-                Resets in {getTimeUntilReset(new Date(messageLimitData.resetTime))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      <ChatHeader 
+        onToggleSidebar={onToggleSidebar}
+        messageLimitData={messageLimitData}
+      />
 
-      {/* Cache Hit Notification */}
-      {cacheHit && (
-        <div className="bg-green-900/20 border-b border-green-500/30 p-3">
-          <div className="flex items-start space-x-3 max-w-4xl mx-auto">
-            <Zap className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-green-300 text-sm font-medium">
-                ⚡ Instant answer from cache ({(cacheHit.similarity * 100).toFixed(0)}% match)
-              </p>
-              <p className="text-green-400/70 text-xs mt-1">
-                Similar to: "{cacheHit.originalQuery.substring(0, 60)}..."
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+      <Banner type="cache" cacheHit={cacheHit} />
+      <Banner type="warning" messageLimitData={messageLimitData} />
+      <Banner type="limit" messageLimitData={messageLimitData} />
 
-      {/* Message Limit Warning Banner */}
-      {messageLimitData && messageLimitData.remaining <= 2 && messageLimitData.remaining > 0 && (
-        <div className="bg-yellow-900/20 border-b border-yellow-500/30 p-3">
-          <div className="flex items-start space-x-3 max-w-4xl mx-auto">
-            <AlertCircle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-yellow-300 text-sm">
-                {messageLimitData.remaining} {messageLimitData.remaining === 1 ? 'message' : 'messages'} remaining. 
-                Resets in {getTimeUntilReset(new Date(messageLimitData.resetTime))}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+      <MessageList 
+        messages={messages}
+        isLoading={isLoading}
+        messageLimitData={messageLimitData}
+        formatBotMessage={formatBotMessage}
+        renderFormattedContent={renderFormattedContent}
+      />
 
-      {messageLimitData && !messageLimitData.canSend && (
-        <div className="bg-red-900/20 border-b border-red-500/30 p-3">
-          <div className="flex items-start space-x-3 max-w-4xl mx-auto">
-            <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-red-300 text-sm font-medium">
-                Message limit reached
-              </p>
-              <p className="text-red-400/80 text-xs mt-1">
-                You've used all 5 messages. Your limit will reset in {getTimeUntilReset(new Date(messageLimitData.resetTime))}.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 ? (
-          <div className="h-full flex items-center justify-center">
-            <div className="text-center">
-              <Sparkles className="w-16 h-16 text-yellow-400 mx-auto mb-4" />
-              <h3 className="text-2xl font-bold text-white mb-2">
-                Welcome to Cobra AI
-              </h3>
-              <p className="text-gray-400 mb-2">
-                Your intelligent study assistant with smart caching!
-              </p>
-              {messageLimitData && (
-                <p className="text-purple-400 text-sm mb-6">
-                  {messageLimitData.remaining} of 5 messages remaining
-                </p>
-              )}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
-                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-purple-500 transition cursor-pointer">
-                  <p className="text-purple-300 text-sm">
-                    "Summarize the key concepts in photosynthesis"
-                  </p>
-                </div>
-                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-purple-500 transition cursor-pointer">
-                  <p className="text-purple-300 text-sm">
-                    "Upload a PDF and ask questions about it"
-                  </p>
-                </div>
-                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-purple-500 transition cursor-pointer">
-                  <p className="text-purple-300 text-sm">
-                    "Help me understand the water cycle"
-                  </p>
-                </div>
-                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-purple-500 transition cursor-pointer">
-                  <p className="text-purple-300 text-sm">
-                    "Create a study plan for my exams"
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <>
-            {messages.map((message, index) => (
-              <div
-                key={index}
-                className={`flex ${
-                  message.role === 'user' ? 'justify-end' : 'justify-start'
-                }`}
-              >
-                <div
-                  className={`max-w-3xl rounded-lg p-4 relative ${
-                    message.role === 'user'
-                      ? 'bg-purple-600 text-white'
-                      : 'bg-gray-800 text-gray-100'
-                  }`}
-                >
-                  {message.cached && (
-                    <div className="absolute -top-2 -right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full flex items-center">
-                      <Zap className="w-3 h-3 mr-1" />
-                      Cached
-                    </div>
-                  )}
-                  {message.file && (
-                    <div className="flex items-center space-x-2 mb-2 pb-2 border-b border-purple-400/30">
-                      <FileText className="w-4 h-4" />
-                      <span className="text-sm opacity-90">
-                        {message.file.name} ({message.file.size} MB)
-                      </span>
-                    </div>
-                  )}
-                  <p className="whitespace-pre-wrap">{message.content}</p>
-                </div>
-              </div>
-            ))}
-            {isLoading && (
-              <div className="flex justify-start">
-                <div className="bg-gray-800 text-gray-100 rounded-lg p-4 flex items-center">
-                  <Loader className="w-5 h-5 animate-spin mr-2" />
-                  <span>Analyzing...</span>
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </>
-        )}
-      </div>
-
-      {/* Input Area */}
-      <div className="border-t border-gray-700 p-4 bg-gray-800">
-        <div className="max-w-4xl mx-auto space-y-3">
-          {/* File Upload Area */}
-          {showFileUpload && !uploadedFile && (
-            <FileUpload
-              onFileProcessed={handleFileProcessed}
-              onRemoveFile={handleRemoveFile}
-              currentFile={null}
-              isProcessing={false}
-            />
-          )}
-
-          {/* Uploaded File Display */}
-          {uploadedFile && (
-            <FileUpload
-              onFileProcessed={handleFileProcessed}
-              onRemoveFile={handleRemoveFile}
-              currentFile={uploadedFile}
-              isProcessing={isLoading}
-            />
-          )}
-
-          {/* Input Row */}
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowFileUpload(!showFileUpload)}
-              className={`${
-                uploadedFile
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-              } rounded-lg px-4 py-3 transition duration-200 flex items-center justify-center`}
-              disabled={isLoading || (messageLimitData && !messageLimitData.canSend)}
-            >
-              <FileText className="w-5 h-5" />
-            </button>
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder={
-                messageLimitData && !messageLimitData.canSend 
-                  ? "Message limit reached. Please wait for reset..." 
-                  : uploadedFile 
-                    ? "Ask about the document..." 
-                    : "Ask me anything about your studies..."
-              }
-              className="flex-1 bg-gray-700 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none disabled:opacity-50 disabled:cursor-not-allowed"
-              rows="1"
-              disabled={isLoading || (messageLimitData && !messageLimitData.canSend)}
-            />
-            <button
-              onClick={handleSendMessage}
-              disabled={(!input.trim() && !uploadedFile) || isLoading || (messageLimitData && !messageLimitData.canSend)}
-              className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg px-6 py-3 transition duration-200 flex items-center justify-center"
-            >
-              <Send className="w-5 h-5" />
-            </button>
-          </div>
-
-          {/* Message limit indicator below input */}
-          {messageLimitData && (
-            <div className="text-center text-sm text-gray-400">
-              {messageLimitData.canSend ? (
-                <span>{messageLimitData.remaining} message{messageLimitData.remaining !== 1 ? 's' : ''} remaining</span>
-              ) : (
-                <span className="text-red-400">Limit reached • Resets in {getTimeUntilReset(new Date(messageLimitData.resetTime))}</span>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+      <ChatInput 
+        input={input}
+        setInput={setInput}
+        uploadedFile={uploadedFile}
+        setUploadedFile={setUploadedFile}
+        showFileUpload={showFileUpload}
+        setShowFileUpload={setShowFileUpload}
+        isLoading={isLoading}
+        messageLimitData={messageLimitData}
+        onSendMessage={handleSendMessage}
+        onFileProcessed={handleFileProcessed}
+        onRemoveFile={handleRemoveFile}
+      />
     </div>
   );
 };
