@@ -1,9 +1,11 @@
-import { Users, BarChart3, Settings, LogOut, Home, Shield, Activity } from 'lucide-react';
+import { Users, BarChart3, Settings, LogOut, Home, Shield, Activity, BookOpen, MessageSquare } from 'lucide-react';
 
 export default function AdminSidebar({ activeTab, setActiveTab, onLogout, userEmail }) {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Home },
     { id: 'users', label: 'User Management', icon: Users },
+    { id: 'guidelines', label: 'Guidelines', icon: BookOpen },
+    { id: 'feedback', label: 'User Feedback', icon: MessageSquare }, // NEW
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'activity', label: 'Activity Log', icon: Activity },
     { id: 'settings', label: 'Settings', icon: Settings },
@@ -25,7 +27,7 @@ export default function AdminSidebar({ activeTab, setActiveTab, onLogout, userEm
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-4 space-y-2">
+      <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
         {menuItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;

@@ -5,6 +5,8 @@ import { useAuth } from '../context/AuthContext';
 import AdminSidebar from '../components/AdminSidebar';
 import DashboardOverview from './AdminPage/DashboardOverview';
 import UserManagement from './AdminPage/UserManagement';
+import GuidelinesManagement from './AdminPage/GuidelinesManagement';
+import FeedbackManagement from './AdminPage/FeedbackManagement'; // NEW
 import AnalyticsPage from './AdminPage/AnalyticsPage';
 import ActivityLog from './AdminPage/ActivityLog';
 import SettingsPage from './AdminPage/SettingsPage';
@@ -85,6 +87,14 @@ export default function AdminDashboard() {
         title: 'User Management',
         description: 'Manage user accounts and permissions'
       },
+      guidelines: {
+        title: 'SWU Guidelines Management',
+        description: 'Manage AI knowledge base for accurate student assistance'
+      },
+      feedback: { // NEW
+        title: 'User Feedback',
+        description: 'View and manage user feedback submissions'
+      },
       analytics: {
         title: 'Analytics & Reports',
         description: 'Detailed insights and statistics'
@@ -145,6 +155,11 @@ export default function AdminDashboard() {
               onDeleteUser={deleteUser}
             />
           )}
+          
+          {activeTab === 'guidelines' && <GuidelinesManagement />}
+          
+          {/* NEW - Feedback Management */}
+          {activeTab === 'feedback' && <FeedbackManagement />}
           
           {activeTab === 'analytics' && <AnalyticsPage users={users} />}
           

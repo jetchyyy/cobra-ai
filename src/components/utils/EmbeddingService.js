@@ -8,7 +8,7 @@ class EmbeddingService {
     this.similarityThreshold = 0.75; // Cosine similarity threshold
     this.embeddingCache = new Map(); // In-memory cache for faster lookups
     this.vectorCache = new Map(); // Cache for embedding vectors
-    this.genAI = new GoogleGenerativeAI(import.meta.env.VITE_FIREBASE_API_KEY);
+    this.genAI = new GoogleGenerativeAI(import.meta.env.VITE_GOOGLE_AI_API_KEY);
     this.embeddingModel = this.genAI.getGenerativeModel({ model: "text-embedding-004" });
     
     // FAISS-like index structure

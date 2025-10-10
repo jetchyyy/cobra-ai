@@ -4,6 +4,7 @@ import { database } from '../firebase/firebase';
 import { useAuth } from '../context/AuthContext';
 import Sidebar from '../components/ChatSidebar';
 import ChatArea from './ChatArea';
+import FeedbackModal from '../components/FeedbackModal';
 import { getMessageLimitData } from '../components/utils/ChatLimitManager';
 
 const Home = () => {
@@ -13,6 +14,10 @@ const Home = () => {
   const [messages, setMessages] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [messageLimitData, setMessageLimitData] = useState(null);
+  
+  // Feedback state
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [messageCount, setMessageCount] = useState(0);
 
   // Load message limit data on mount and when user changes
   useEffect(() => {
@@ -75,6 +80,11 @@ const Home = () => {
     return () => unsubscribe();
   }, [currentChatId, user]);
 
+  // Reset message count when changing chats
+  useEffect(() => {
+    setMessageCount(0);
+  }, [currentChatId]);
+
   const handleCreateChat = async (firstMessage) => {
     if (!user) return;
 
@@ -97,40 +107,75 @@ const Home = () => {
     }
   };
 
- const handleSaveMessage = async (chatId, role, content, fileMetadata = null) => {
-  if (!user) return;
+  const handleSaveMessage = async (chatId, role, content, fileMetadata = null) => {
+    if (!user) return;
 
-  try {
-    const messagesRef = ref(database, `messages/${user.uid}/${chatId}`);
-    const newMessageRef = push(messagesRef);
-    
-    const messageData = {
-      role,
-      content,
-      timestamp: new Date().toISOString()
-    };
-
-    // Add file metadata if it exists
-    if (fileMetadata) {
-      messageData.file = fileMetadata;
-    }
-
-    await set(newMessageRef, messageData);
-
-    // Update chat's last message
-    const chatRef = ref(database, `chats/${user.uid}/${chatId}`);
-    const chatSnapshot = await get(chatRef);
-    if (chatSnapshot.exists()) {
-      await set(chatRef, {
-        ...chatSnapshot.val(),
-        lastMessage: content.substring(0, 100),
+    try {
+      const messagesRef = ref(database, `messages/${user.uid}/${chatId}`);
+      const newMessageRef = push(messagesRef);
+      
+      const messageData = {
+        role,
+        content,
         timestamp: new Date().toISOString()
-      });
+      };
+
+      // Add file metadata if it exists
+      if (fileMetadata) {
+        messageData.file = fileMetadata;
+      }
+
+      await set(newMessageRef, messageData);
+
+      // Update chat's last message
+      const chatRef = ref(database, `chats/${user.uid}/${chatId}`);
+      const chatSnapshot = await get(chatRef);
+      if (chatSnapshot.exists()) {
+        await set(chatRef, {
+          ...chatSnapshot.val(),
+          lastMessage: content.substring(0, 100),
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Increment message count and check for feedback trigger
+      if (role === 'user') {
+        const newCount = messageCount + 1;
+        setMessageCount(newCount);
+        
+        // Show feedback modal after every 3 user messages
+        if (newCount % 3 === 0) {
+          setShowFeedbackModal(true);
+        }
+      }
+    } catch (error) {
+      console.error('Error saving message:', error);
     }
-  } catch (error) {
-    console.error('Error saving message:', error);
-  }
-};
+  };
+
+  const handleFeedbackSubmit = async (feedbackData) => {
+    if (!user || !currentChatId) return;
+
+    try {
+      const feedbackRef = ref(database, 'userFeedbacks');
+      const newFeedbackRef = push(feedbackRef);
+      
+      const feedbackEntry = {
+        userId: user.uid,
+        userEmail: user.email,
+        chatId: currentChatId,
+        rating: feedbackData.rating,
+        feedback: feedbackData.feedback,
+        timestamp: new Date().toISOString(),
+        messageCount: messageCount
+      };
+
+      await set(newFeedbackRef, feedbackEntry);
+      console.log('Feedback submitted successfully');
+    } catch (error) {
+      console.error('Error submitting feedback:', error);
+    }
+  };
 
   const handleSelectChat = (chatId) => {
     setCurrentChatId(chatId);
@@ -139,6 +184,7 @@ const Home = () => {
   const handleNewChat = () => {
     setCurrentChatId(null);
     setMessages([]);
+    setMessageCount(0);
   };
 
   const handleDeleteChat = async (chatId) => {
@@ -157,6 +203,7 @@ const Home = () => {
       if (currentChatId === chatId) {
         setCurrentChatId(null);
         setMessages([]);
+        setMessageCount(0);
       }
     } catch (error) {
       console.error('Error deleting chat:', error);
@@ -188,6 +235,13 @@ const Home = () => {
         userId={user?.uid}
         messageLimitData={messageLimitData}
         setMessageLimitData={setMessageLimitData}
+      />
+      
+      {/* Feedback Modal */}
+      <FeedbackModal
+        isOpen={showFeedbackModal}
+        onClose={() => setShowFeedbackModal(false)}
+        onSubmit={handleFeedbackSubmit}
       />
     </div>
   );

@@ -1,8 +1,9 @@
-// ChatArea.jsx - Refactored with modular components
+// ChatArea.jsx - Enhanced with Guidelines Search
 import { useState, useEffect } from 'react';
 import { model } from '../firebase/firebase';
 import { getMessageLimitData, incrementMessageCount, getTimeUntilReset } from '../components/utils/ChatLimitManager';
 import embeddingService from '../components/utils/EmbeddingService';
+import guidelinesService from '../components/utils/GuidelinesService'; 
 
 import ChatHeader from './Chat/ChatHeader';
 import Banner from './Chat/Banner';
@@ -25,6 +26,12 @@ const ChatArea = ({
   const [uploadedFile, setUploadedFile] = useState(null);
   const [showFileUpload, setShowFileUpload] = useState(false);
   const [cacheHit, setCacheHit] = useState(null);
+  const [guidelineUsed, setGuidelineUsed] = useState(null); // NEW
+
+  // Initialize guidelines index on mount
+  useEffect(() => {
+    guidelinesService.buildGuidelinesIndex();
+  }, []);
 
   // Clean old embeddings on component mount
   useEffect(() => {
@@ -43,10 +50,9 @@ const ChatArea = ({
   };
 
   const formatBotMessage = (content) => {
-    // Remove asterisks used for bold/italic markdown
-    content = content.replace(/\*\*\*/g, ''); // Remove triple asterisks
-    content = content.replace(/\*\*/g, '');   // Remove double asterisks (bold)
-    content = content.replace(/\*/g, '');     // Remove single asterisks (italic)
+    content = content.replace(/\*\*\*/g, '');
+    content = content.replace(/\*\*/g, '');
+    content = content.replace(/\*/g, '');
     
     const lines = content.split('\n');
     const elements = [];
@@ -319,6 +325,7 @@ const ChatArea = ({
 
     setIsLoading(true);
     setCacheHit(null);
+    setGuidelineUsed(null);
 
     try {
       let chatId = currentChatId;
@@ -330,7 +337,28 @@ const ChatArea = ({
         await onSaveMessage(chatId, 'user', userMessage, fileData ? { name: fileData.name, size: fileData.size } : null);
       }
 
-      // Check for cached similar query
+      // STEP 1: Search for relevant guidelines (NEW)
+      let relevantGuidelines = [];
+      if (!fileData) { // Only search guidelines if no file is uploaded
+        console.log('Searching for relevant guidelines...');
+        relevantGuidelines = await guidelinesService.searchGuidelines(userMessage, 2);
+        
+        if (relevantGuidelines.length > 0) {
+          console.log(`Found ${relevantGuidelines.length} relevant guidelines`);
+          console.log('Top match:', relevantGuidelines[0].guideline.title, 
+                     `(${(relevantGuidelines[0].similarity * 100).toFixed(1)}%)`);
+          
+          setGuidelineUsed({
+            title: relevantGuidelines[0].guideline.title,
+            category: relevantGuidelines[0].guideline.category,
+            similarity: relevantGuidelines[0].similarity
+          });
+
+          setTimeout(() => setGuidelineUsed(null), 4000);
+        }
+      }
+
+      // STEP 2: Check for cached similar query
       let aiResponseText = null;
       let usedCache = false;
 
@@ -356,7 +384,7 @@ const ChatArea = ({
         }
       }
 
-      // If no cache hit, call the API
+      // STEP 3: If no cache hit, call the AI (with or without guidelines)
       if (!usedCache) {
         console.log('No cache hit. Calling AI API...');
         
@@ -380,8 +408,24 @@ const ChatArea = ({
         }
         
         let currentPrompt = userMessage;
+        
+        // INJECT GUIDELINES INTO PROMPT (NEW)
+        if (relevantGuidelines.length > 0) {
+          const guidelinesContext = relevantGuidelines.map((g, idx) => 
+            `\n--- Official SWU Guideline ${idx + 1}: ${g.guideline.title} ---\n${g.guideline.content}`
+          ).join('\n');
+          
+          currentPrompt = `You are an AI assistant for Southwestern University (SWU). Use the following official university guidelines to answer the student's question accurately. If the guidelines contain relevant information, prioritize it in your response and mention that it's from official SWU policy.
+
+${guidelinesContext}
+
+Student Question: ${userMessage}
+
+Provide a helpful, accurate response based on the official guidelines above. If the guidelines don't cover the question, you may provide general information but clearly state it's not from official policy.`;
+        }
+        
         if (fileData) {
-          currentPrompt = `[Document: ${fileData.name}]\n\n${fileData.content}\n\n${userMessage}`;
+          currentPrompt = `[Document: ${fileData.name}]\n\n${fileData.content}\n\n${currentPrompt}`;
         }
         
         conversationHistory.push({
@@ -453,6 +497,7 @@ const ChatArea = ({
         messageLimitData={messageLimitData}
       />
 
+      <Banner type="guideline" guidelineUsed={guidelineUsed} />
       <Banner type="cache" cacheHit={cacheHit} />
       <Banner type="warning" messageLimitData={messageLimitData} />
       <Banner type="limit" messageLimitData={messageLimitData} />
