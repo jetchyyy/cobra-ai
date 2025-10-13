@@ -6,7 +6,7 @@ import DeleteChatHistory from './DeleteChatHistory';
 import DeleteSingleChat from './DeleteSingleChat';
 import LogoutConfirmationModal from './LogoutConfirmationModal';
 
-const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteChat, isOpen, messageLimitData }) => {
+const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteChat, isOpen, onToggleSidebar, messageLimitData }) => {
   const { user, logout } = useAuth();
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
@@ -37,13 +37,27 @@ const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteCh
     setShowLogoutModal(false);
   };
 
+  const handleCloseSidebar = () => {
+    if (onToggleSidebar) {
+      onToggleSidebar();
+    }
+  };
+
+  const handleChatSelect = (chatId) => {
+    onSelectChat(chatId);
+    // Close sidebar on mobile after selecting a chat
+    if (window.innerWidth < 1024) {
+      handleCloseSidebar();
+    }
+  };
+
   return (
     <>
       {/* Mobile overlay */}
       {isOpen && (
         <div
           className="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-40"
-          onClick={() => onSelectChat(null)}
+          onClick={handleCloseSidebar}
         />
       )}
 
@@ -63,8 +77,8 @@ const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteCh
             <div className="flex items-center space-x-2">
               <DeleteChatHistory onHistoryDeleted={() => onSelectChat(null)} />
               <button
-                onClick={() => onSelectChat(null)}
-                className="lg:hidden text-gray-400 hover:text-white"
+                onClick={handleCloseSidebar}
+                className="lg:hidden text-gray-400 hover:text-white transition-colors duration-200"
               >
                 <X className="w-6 h-6" />
               </button>
@@ -152,7 +166,7 @@ const ChatSidebar = ({ chats, currentChatId, onSelectChat, onNewChat, onDeleteCh
                     ? 'bg-purple-600 text-white'
                     : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                 }`}
-                onClick={() => onSelectChat(chat.id)}
+                onClick={() => handleChatSelect(chat.id)}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">

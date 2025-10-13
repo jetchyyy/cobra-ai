@@ -223,6 +223,7 @@ const Home = () => {
         onNewChat={handleNewChat}
         onDeleteChat={handleDeleteChat}
         isOpen={sidebarOpen}
+        onToggleSidebar={toggleSidebar}
         messageLimitData={messageLimitData}
       />
       <ChatArea
